@@ -1,0 +1,418 @@
+# Tuteur IA Socratique — Brief d'initialisation projet
+
+
+## 0. Contexte (pour un agent qui arrive à froid)
+
+POC d'un **tuteur IA socratique à mémoire compounding** pour aider une élève (CM2, Histoire) à comprendre par elle-même. La mémoire de l'IA (modèle élève relu/réécrit séance après séance) la fait progresser. **Vision produit** : utilisable en autonomie par une enfant — elle lance l'app, dit "fais-moi réviser la leçon 13" ou "j'ai reçu une nouvelle leçon, prends-la en compte", et tout se passe dans un seul chat.
+
+Le **lot 1** (déjà fait, repo `tuteur-ia-poc-cc`) était file-based piloté par Claude Code + markdown — validé par l'usage, mais ne démontre aucune ingénierie agentique. **Le lot 2 (ce projet) reconstruit le système "production-shaped"** pour démontrer le raisonnement d'ingénierie.
+
+**Le moat = l'architecture, pas le framework ni l'UI.** Cf. principes ci-dessous. "Je l'ai réécrit en LangGraph" sans ce raisonnement = commodité = zéro valeur.
+
+### Note de cadrage importante (déterminisme vs flexibilité)
+Construire un agent *fiable* exige beaucoup de choix détaillés — c'est le travail, pas un détour. Le fil conducteur : **contraindre la plomberie (orchestration, quand écrire la mémoire, quel flow tourne) ; laisser ouverte la pédagogie (la conversation socratique).** La compétence du produit vit dans le nœud socratique et dans la qualité de l'hydratation mémoire qui le nourrit — pas dans un prompt "malin". Scope de domaine étroit = force (fiabilité), pas faiblesse. Le risque à éviter n'est PAS "trop déterministe" mais l'inverse : donner trop d'autonomie d'orchestration au LLM (imprévisible, cher, indébuggable).
+
+### Périmètre de CETTE init
+- ✅ Scaffold monorepo + **un seul endpoint `/api/chat`** routé par intents (voir §5/§6).
+- ✅ **DB Postgres** (schéma + migrations) comme source de vérité domaine (voir §4).
+- ✅ **Chat basique uniquement** (texte). Pas de mascotte, pas d'UI centrale, pas de composant UI spécifique par question.
+- ✅ **Architecture évolutive** : rendu *parts-based dès le jour 1* pour ajouter des **composants custom par question / cartes de confirmation** plus tard **sans refonte** (juste un `case` de plus). Voir §7 et §8.
+
+---
+
+## 1. Principes directeurs (non négociables)
+
+1. **Orchestration en code déterministe** (graphe orienté), **LLM uniquement dans les nœuds** qui ont besoin d'intelligence. Le LLM n'orchestre jamais. (C'est le pattern LangGraph "workflow / router", *pas* l'agent autonome ni le "supervisor" LLM-orchestré.)
+2. **L'update mémoire = nœud déterministe** : le LLM *propose* des opérations structurées (zod), un **applier déterministe** les exécute en DB. Jamais "le LLM réécrit la fiche en aveugle".
+3. **Altitude par nœud** : code déterministe (plomberie) / appel LLM contrôlé + output structuré (raisonnement cadré) / harness d'agent complet (seulement les nœuds vraiment agentiques — ici, le nœud socratique). Documenter chaque choix.
+4. **Front = client mince.** Ne doit jamais devenir le projet. Le re-sharpening React est un byproduct, pas un driver de scope.
+5. **Stateless au transport, stateful dans des stores explicites** (voir §9).
+6. **Working memory (thread, jetable) ≠ long-term memory (DB, durable).** Le thread est le scratch d'une séance ; le modèle élève en DB est le produit. **Jamais de mémoire durable conditionnée à une fermeture propre de l'app** → distillation incrémentale (§4.6).
+7. **Évolutif par défaut** : rendu parts-based, data parts typées centralisées, composition de stream prête à accueillir des `data-*` (voir §7).
+8. **YAGNI** : on ne *construit* pas la mascotte / l'UI centrale / les composants par question / l'édition chirurgicale de leçon maintenant. On garde juste l'archi *compatible*.
+
+---
+
+## 2. Stack (à pinner dans package.json + à vérifier)
+
+| Besoin | Choix |
+|---|---|
+| Monorepo | **pnpm workspaces + Turborepo** (pas Nx) |
+| Backend | **Fastify** (API mince) + **LangGraph.js** (`@langchain/langgraph`) in-process |
+| LLM dans les nœuds | classes modèle LangChain + `withStructuredOutput(zod)` pour le structuré. **Accès via une factory par-rôle** (voir ci-dessous) — jamais de modèle hardcodé dans un nœud |
+| **DB domaine** | **PostgreSQL** (local via docker compose). Accès typé via **Prisma** (ORM connu ; migrations + seed batteries-included) + Zod pour valider les payloads d'extraction LLM. ⚠️ Les tables `*_history` s'écrivent **dans le code de l'applier (transaction)**, **pas par triggers DB** (Prisma ne modélise pas les triggers proprement ; l'applier explicite colle aussi mieux au narratif). Choix de commodité, hors moat |
+| Checkpointer LangGraph | `PostgresSaver` (`@langchain/langgraph-checkpoint-postgres`) ; in-memory pour les tests. **Sur le graphe parent uniquement** |
+| Adaptateur stream | **`@ai-sdk/langchain`** (`toUIMessageStream`, `toBaseMessages`) |
+| Frontend | **React + Vite** + **`@ai-sdk/react`** (`useChat`) — **AI SDK v6** |
+| Types partagés | package `shared` (TS) |
+| Observabilité / coût | **OpenTelemetry → Langfuse** (étape ultérieure, pas au scaffold) |
+| Eval | LLM-as-judge x2 via Langfuse (étape ultérieure) |
+| Conteneurisation | **docker compose** (backend + **Postgres** + Langfuse + deps) |
+
+### Factory modèle par-rôle (décision 09/06)
+Le provider/modèle ne doit **jamais** être hardcodé dans un nœud. Une factory `getModel(role)` mappe un **rôle** → `{ provider, model, temperature }`, surchargeable par env.
+
+```ts
+// llm/models.ts
+type Role = "classifier" | "ingest_parse" | "socratic" | "session_analysis" | "judge";
+function getModel(role: Role): BaseChatModel { /* config par-rôle, env-overridable */ }
+```
+- **Pourquoi par-rôle et pas un modèle global** : c'est ce qui permet plus tard de tourner le socratique sur un modèle fort et la classification/extraction sur un modèle cheap, et de raconter le tradeoff coût/qualité (pilier C). Concevoir l'abstraction par-rôle **dès le jour 1** (gratuit maintenant, cher à rétrofitter).
+- **MVP** : seam + override manuel par env pour tester le ressenti à la main. Pas de harness qui *choisit* le modèle (ça c'est B/C, plus tard).
+- Provider par défaut = **Anthropic Claude**, mais l'archi est **provider-agnostique** (LangChain absorbe l'interface ; `withStructuredOutput(zod)` marche cross-provider — tester le structuré sur chaque provider activé).
+- **Contrainte vision** : le rôle `ingest_parse` doit pointer un **modèle multimodal** (analyse d'images de leçon, §5.2) → le swap provider est contraint sur ce rôle aux candidats vision-capable.
+
+> ⚠️ **AI SDK v6 est récent (sortie 2026).** Avant de coder le streaming, **vérifier les noms/signatures exacts contre la version installée** : `toUIMessageStream`, `createUIMessageStreamResponse`, `createUIMessageStream` (writer), `useChat` (`onData`, `sendMessage`, config `transport`/`prepareSendMessagesRequest`), data parts `transient`, `addToolOutput`. Pinner les versions et consulter la doc courante (ai-sdk.dev). Ne pas présumer la nomenclature v5.
+> Node **20+**, pnpm.
+
+---
+
+## 3. Structure du repo
+
+```
+tuteur-ia-lot2/
+├── apps/
+│   ├── backend/                 # Fastify + LangGraph.js
+│   │   └── src/
+│   │       ├── server.ts        # bootstrap Fastify, la route /api/chat
+│   │       ├── api/             # handler chat (stateless) + guard resume-vs-message (§6)
+│   │       ├── graphs/
+│   │       │   ├── router.graph.ts    # graphe parent : classify → conditional edges
+│   │       │   ├── ingest.graph.ts    # sous-graphe "Ingérer une leçon"
+│   │       │   ├── revise.graph.ts    # sous-graphe "Réviser" (le cœur)
+│   │       │   └── qa.graph.ts        # sous-graphe "Q&A sur une leçon"
+│   │       ├── nodes/           # nœuds (déterministes + LLM)
+│   │       ├── memory/          # repositories DB + applier d'opérations (déterministe) ; hydratation
+│   │       ├── db/              # schéma, migrations, client Kysely
+│   │       ├── llm/             # factory modèles par-rôle, schémas zod, structured output
+│   │       ├── streaming/       # seam LangGraph → UIMessageStream → Fastify reply ; interrupt → data part
+│   │       └── checkpoint/      # PostgresSaver (checkpointer LangGraph)
+│   └── frontend/                # React + Vite
+│       └── src/
+│           ├── chat/            # useChat, rendu parts-based, guard resume côté front
+│           ├── components/      # bulles, ConfirmCard (HIL), (panneau modèle élève = optionnel)
+│           └── state/           # store léger (prêt pour UI partagée future)
+├── packages/
+│   └── shared/                  # types TS partagés (TutorUIMessage typé, contrats API, types mémoire, enum d'intents)
+├── docker-compose.yml           # backend + Postgres + (Langfuse plus tard)
+├── turbo.json
+├── pnpm-workspace.yaml
+└── AGENT-BRIEF.md               # ce fichier
+```
+
+> ⚠️ Plus de dossier `data/` versionné git. Le **git-versioning des données est abandonné** (bloat du diff à l'échelle + privacy). La source de vérité domaine = **Postgres** (§4).
+
+---
+
+## 4. Modèle mémoire (source de vérité domaine) — **DB Postgres**
+
+La mémoire durable vit en **Postgres**, pas en fichiers markdown. Elle est **distincte des messages de chat** (éphémères, dans le checkpointer). S'inspirer des patterns de l'écosystème (LangMem profile, mem0 op-set, Letta memory blocks, taxonomie CoALA) mais **réimplémenter soi-même** (LangMem est Python ; on veut le relationnel + audit + intégrité Postgres ; et câbler ce nœud *est* l'ingénierie nommable du lot 2).
+
+### 4.1 Les deux formes de mémoire (détermine l'op-set)
+- **Forme "état" — schéma fixe, une ligne.** Ex : `student_profile` (un contrat de propriétés connues). Op-set = **UPDATE-merge / NOOP** (on ne ADD/DELETE pas une colonne fixe).
+- **Forme "collection" — des faits qui s'accumulent et disparaissent, une ligne par fait.** Ex : `mastery` par concept, `observation` (optionnel). Op-set = **ADD / UPDATE / DELETE / NOOP** complet.
+
+### 4.2 Pattern transversal : table d'état courant **+** table d'historique
+Pour **chaque entité mutable** par un nœud LLM : une table **état courant** (le read-model, lu à chaque séance, O(1)) **+** une table **`*_history`** append-only (audit/rollback, jamais dans le hot path). L'applier écrit l'état courant **et** append à l'history dans **la même transaction** (trigger `AFTER UPDATE/DELETE` ou code). Le LLM ne lit **que** l'état courant.
+
+> ❌ Ne PAS faire de l'history-only avec reconsolidation à la lecture : ça force un fold sur N lignes + une reconsolidation **non-déterministe** par le LLM à chaque lecture = on perd le "compounding par distillation". L'état consolidé doit être **matérialisé**.
+
+### 4.3 Entités & schéma (Postgres ; esquisse à affiner à l'init)
+
+```sql
+student(id, display_name, grade_level, age, created_at)
+-- Identité STATIQUE (pas le profil évolutif) : display_name=prénom (l'adresser) ;
+-- grade_level/age = calibrer langage/difficulté/précision attendue. Consommé par socratic, ingest_parse, judge.
+
+-- LEÇON : blob non structuré + métadonnées légères
+lesson(id, subject, title, content_md TEXT, metadata JSONB, status, created_at, updated_at)
+-- status ∈ {draft, confirmed, revised} (cycle de vie, voir ingestion optimiste §5.2)
+lesson_source_image(id, lesson_id FK, path, ordinal)
+-- images sources persistées (volume local, ordre préservé). Permet : correction=re-ingest sans re-photographier,
+-- debug de la qualité d'extraction, et REPLAY déterministe pour l'éval (pilier B).
+
+-- CONCEPT : unité enseignable, extraite à l'ingestion. = le "dénominateur" d'une leçon.
+concept(id, lesson_id FK, label, precision_bar, created_at)
+-- precision_bar = barre de maîtrise attendue. Échelle ordinale légère {exact, intermédiaire, global}
+--   + note texte libre optionnelle. PAS de champ `kind` (taxonomie subject-specific = prématuré,
+--   ne généralise pas en enum à travers histoire/sciences/maths ; precision_bar porte la charge actionnable).
+
+-- MAÎTRISE : overlay par (élève, concept). FORME COLLECTION.
+mastery(student_id FK, concept_id FK, level, rationale TEXT, version,
+        changed_by, run_id, confidence, is_locked, valid_from)  -- PK(student_id, concept_id)
+mastery_history(... mêmes colonnes + valid_to)   -- append-only
+
+-- PROFIL GLOBAL ÉLÈVE : contrat de propriétés PÉDAGOGIQUES (pas l'identité, qui est sur `student`).
+-- FORME ÉTAT (colonnes typées TEXT, contenu free-text). Principe : une propriété mérite sa colonne
+-- SEULEMENT si un flow la consomme pour changer un comportement (sinon = déco ; cf. piège lot 1 : "notes diverses" jamais lues).
+-- Les 3 dimensions ci-dessous sont toutes INJECTÉES DANS LE SYSTEM PROMPT DU NŒUD SOCRATIQUE (guidance)
+-- et AFFINÉES par le nœud d'analyse de séance (UPDATE-merge / NOOP, silence≠contradiction).
+student_profile(student_id FK PK,
+  learning_style    TEXT,   -- format/rythme/modalités qui marchent (ex: "questions courtes, une à la fois ; brèves OK ; exemples concrets") → comment questionner
+  motivation_levers TEXT,   -- ce qui l'encourage (ex: "félicitations enthousiastes sur une série de bonnes réponses")       → ton de renforcement
+  friction_to_avoid TEXT,   -- déclencheurs de décrochage à éviter (ex: "trop de questions d'affilée ; longues lectures ; se sentir jugée") → garde-fous
+  version, changed_by, run_id, updated_at)
+student_profile_history(... + valid_to)
+-- Colonnes typées (pas EAV, pas JSONB) : la DB enforce présence + contrat code zod ↔ DB 1:1.
+-- Démarrent VIDES ("à apprendre"), se remplissent au fil des séances (= le compounding). Évolution du contrat = migration propre (rare).
+-- ❌ Pas de champ "notes diverses"/placeholder sans consommateur.
+
+-- TRACE DE SÉANCE : épisodique, append-only, lien fort élève+leçon. Écrite en incrémental (§4.6).
+session_trace(id, student_id FK, lesson_id FK, started_at, ended_at, transcript JSONB, summary TEXT, extraction JSONB)
+
+-- OBSERVATION (optionnel, si on veut des faits fins type "confond X avec Y") : FORME COLLECTION.
+-- observation(id, student_id, concept_id, fact TEXT, version, changed_by, run_id, valid_from) + history
+```
+
+### 4.4 Concept & maîtrise — granularité et "inconnu"
+- La **maîtrise est par concept**, pas par leçon (une leçon a plein de concepts, avec des barres de précision différentes : dates = exact, concept vague = global, définition = entre-deux).
+- `concept` (le dénominateur) est créé **à l'ingestion**. `mastery` (l'overlay) est inséré **paresseusement, à la première évaluation d'un concept = l'op ADD.**
+- **"Inconnu" = un concept sans ligne `mastery` courante.** Récupéré par anti-join trivial :
+  ```sql
+  SELECT c.* FROM concept c
+  LEFT JOIN mastery m ON m.concept_id = c.id AND m.student_id = :id
+  WHERE m.concept_id IS NULL;   -- concepts jamais évalués (maîtrise inconnue)
+  ```
+- Donc **on n'insère PAS une ligne par concept dès la première révision** — seulement les concepts évalués. L'absence signifie "inconnu" sans ambiguïté car `concept` est le dénominateur canonique. (Pré-seeder des lignes `not_assessed` explicites ne vaut le coup que si on veut un jour attacher de la métadonnée à l'état inconnu — pas maintenant.)
+
+### 4.5 Politique d'écriture (le vrai risque, pas le rollback)
+**L'overwrite aveugle est le tueur silencieux.** Exemple : séance 1 → `mastery.revolution = "comprend causes, confond dates"`. Séance 5 (les dates pas évoquées) → un overwrite produirait `"maîtrise les causes"` et **effacerait** la nuance dates — pas parce que l'élève a progressé, mais parce que l'extracteur ne l'a pas *observée*. **L'absence de preuve devient preuve d'absence.**
+
+Règles :
+- Le nœud d'extraction émet une **liste d'opérations** (sortie structurée zod) `{op, cible, nouvelle_valeur, raison, confidence}`, op ∈ **ADD / UPDATE / DELETE / NOOP**. Un **applier déterministe** les exécute.
+- **UPDATE merge, ne remplace pas.** **DELETE uniquement sur contradiction explicite.** **Silence ≠ contradiction** : un fait non ré-observé cette séance = NOOP, jamais DELETE.
+- **Forme état** (`student_profile`) → l'op-set se réduit en pratique à **UPDATE-merge / NOOP** par champ.
+- **Forme collection** (`mastery`, `observation`) → op-set complet (ADD = 1re évaluation, UPDATE = affiner, DELETE = concept retiré/contredit).
+- `zod` garantit la **forme**, pas la **vérité** du texte. Validation verte ≠ contenu correct.
+- **Verrou par défaut (`is_locked`)** sur les champs qui *pilotent le comportement* du tuteur (mémoire "procédurale", écriture plus risquée) : ils ne changent que sur opération explicite et loggée.
+
+### 4.6 Audit / visibilité / rollback
+- Chaque op appliquée écrit une ligne d'history avec **provenance** : `ancienne_valeur, nouvelle_valeur, op, raison, changed_by (nom du nœud), run_id (thread/run LangGraph), confidence, ts`.
+- **Visibilité** = lire la timeline d'une cible (`SELECT … FROM *_history WHERE … ORDER BY version`) : quoi, quand, par quel nœud, avec quelle confiance.
+- **Rollback** = réécrire la version N de l'history comme état courant (le rollback se logge à son tour). Rien n'est détruit.
+- Visibilité et rollback = **le même mécanisme** (le journal d'opérations EST la piste d'audit). Défense en profondeur : la politique d'écriture *réduit* les mauvaises écritures, l'history *rattrape* celles qui passent.
+- ⚠️ **Le checkpointer LangGraph ≠ rollback de mémoire domaine.** Il versionne l'**état d'exécution du graphe par `thread_id`** (rewind d'une conversation). Tes tables d'history versionnent le **modèle élève**. Deux axes différents — ne pas confondre.
+
+### 4.7 Distillation incrémentale (robuste au quit brutal)
+- **Unité de distillation = par concept évalué, PAS "fin de séance"** (une enfant ferme l'app brutalement). Le nœud d'update mémoire vit **dans la boucle socratique** (§5.3), pas en nœud terminal.
+- Chaque update incrémental est **idempotent et indépendant** : quit après Q4 → 4 concepts à jour, le 5e reste inconnu. Cohérent, jamais à moitié corrompu.
+- `session_trace` écrite **en incrémental** (append des échanges / résumé courant).
+- Une synthèse de fin de séance plus riche = **nice-to-have si la séance va au bout** ; la mémoire durable n'en dépend **jamais**.
+- Coût : plus d'appels → instrumenter (pilier C). Correctness > coût pour le POC.
+
+### 4.8 Hydratation du nœud socratique (là où vient la compétence)
+La qualité du tuteur dépend surtout de **ce qu'on injecte dans le nœud socratique**, pas d'un prompt malin. Hydrater le contexte du nœud avec : le **contenu de la leçon**, la **`precision_bar` du concept en cours**, la **maîtrise courante** de l'élève sur ce concept et les concepts liés, l'état d'inconnu (concepts non évalués), et le dialogue en cours. Tout le modèle mémoire existe pour nourrir ce nœud.
+
+---
+
+## 5. Flows = un router workflow sur des sous-graphes par intent
+
+**Pattern canonique : "router workflow over intent subgraphs"** (déterministe), *pas* le "supervisor" LLM-orchestré. Réfs : LangGraph *Thinking in LangGraph*, *use-subgraphs*, *graph-api*, *interrupts*, *persistence* ; LangChain *How to think about agent frameworks*.
+
+### 5.0 MVP = 3 intents + un garde-fou
+Enum **fermé** d'intents : `["ingest", "revise", "qa", "out_of_scope"]`.
+- **`out_of_scope` dès le début** (quasi gratuit, structurel) : un nœud renvoie une redirection fixe ("je t'aide à réviser tes leçons, on reprend ?"). C'est la muraille anti-ChatGPT-générique.
+- Intent **curiosité ouverte cadrée leçon** = différé (itération future).
+
+### 5.1 Router (graphe parent)
+`classify` (LLM, **output structuré** `z.enum`, le seul intelligence du router) → **arête conditionnelle déterministe** (code pur) → sous-graphe. Le LLM remplit `state.intent` ; le code décide.
+
+```ts
+const IntentSchema = z.object({ intent: z.enum(["ingest","revise","qa","out_of_scope"]) });
+// nœud classify : getModel("classifier").withStructuredOutput(IntentSchema)
+function routeOnIntent(s){ switch(s.intent){ case "ingest": return "ingestSG";
+  case "revise": return "reviseSG"; case "qa": return "qaSG"; default: return "outOfScope"; } }
+parent.addConditionalEdges("classify", routeOnIntent, { ingestSG:"ingestSG", reviseSG:"reviseSG", qaSG:"qaSG", outOfScope:"outOfScope" });
+```
+- **État parent sur `MessagesAnnotation`** (transcript partagé) + clés propres : `intent`, `activeLessonId`/`lastIngestedLessonId`, `socraticStep`, `pendingIngestion`. ⚠️ `messages` a besoin du **reducer d'append** (fourni par `MessagesAnnotation`) — sinon chaque nœud qui renvoie `{messages:[…]}` **écrase** l'historique. Les scalaires (`intent`…) prennent le reducer par défaut (remplace), ce qui est correct.
+- **Classifier différable** : avec un seul intent câblé tu n'as même pas besoin du classifier ; mais le MVP a 3 intents → on le construit. Confiance basse du classifier → router vers un petit nœud **`clarify`** (pose une question) plutôt que deviner. Flow-switch cheap = un mauvais branchement se rattrape au tour suivant.
+
+### 5.2 Sous-graphe `ingest` — **optimiste, non-bloquant**
+```
+images → [LLM vision, structuré] parse leçon + extrait concepts → [déterministe] écrit lesson(status='draft') + concepts (UPSERT idempotent) → [LLM] récap prose ("voici ce que j'ai compris, dis-moi si ça cloche")
+```
+- **Persiste proactivement** (draft), **ne fait PAS attendre la validation explicite.** Le récap est un simple tour assistant (tokens) ; l'enfant peut ignorer et enchaîner. Le feedback éventuel = un flow qui *modifie* de la donnée existante (cf. §14 : **MVP = ré-ingestion/replace**, pas d'édition chirurgicale).
+- `interrupt()` **réservé aux gates durs** (cas dangereux, ex : écraser une leçon existante) — voir §5.5.
+- Time-box l'ingestion : ne doit pas devenir le projet. **Pour démarrer le build, seed les fixtures à la main** (l'ingestion conversationnelle complète vient après le cœur Réviser — voir §12).
+
+**Spécificités "images" (décisions 09/06) :**
+- **Modèle vision** : `ingest_parse` = modèle multimodal (contrainte factory §2).
+- **Transport** : images arrivent par `/api/chat` en **file parts AI SDK v6** → `toBaseMessages` → `HumanMessage` multimodal LangChain. ⚠️ Vérifier le mapping exact image-part → bloc image à l'init.
+- **Input = `image[]`** (leçon multi-pages), **ordre préservé** (`lesson_source_image.ordinal`).
+- **Persistance des sources** : stocker les images (volume local, chemin dans `lesson_source_image`). Raisons : correction=re-ingest, debug d'extraction, **replay déterministe pour l'éval**. (Alternative légère v1 : jeter + re-photographier — mais persister est cheap et tu voudras debugger l'extraction.)
+- **Extraction** : un appel vision + structured output (leçon + concepts). Si peu fiable, splitter **transcrire → structurer**. Le **LLM-judge "light"** de sanity-check (leçon cohérente ? concepts non vides ?) gagne sa place ici (extraction image = faillible).
+- **Latence → progression** : la vision est lente → émettre un **data part de progression** ("j'analyse tes images…"). = premier vrai usage d'un signal non-prose (§7).
+- **Coût (pilier C)** : ingestion image = hotspot de coût (tokens image) → instrumenter.
+- **Faillibilité → le récap optimiste EST le filet** : l'extraction se trompe (date mal lue, section ratée) → "voici ce que j'ai compris" + correction par ré-ingestion = le mécanisme de sûreté central, pas un détail.
+- **Privacy** (hors scope POC, à noter) : photos du travail scolaire d'une enfant → API LLM tierce. À garder en tête pour toute productionisation future.
+
+### 5.3 Sous-graphe `revise` — **le cœur** (le seul vrai nœud agent)
+```
+[déterministe] hydrate mémoire (contenu leçon + concepts + maîtrise courante + inconnus) →
+BOUCLE EXTERNE DÉTERMINISTE sur les concepts de la leçon :
+   ┌─ dialogue socratique interne (nœud agent, BORNÉ) : [LLM socratic] ↔ réponse élève  (STREAME token/token)
+   │     • le LLM émet un "signal de maîtrise" structuré → code déterministe décide : concept maîtrisé / passe au suivant / max N tours atteint
+   └─ [déterministe] À LA RÉSOLUTION DU CONCEPT → update mémoire incrémental (applier ADD/UPDATE/DELETE/NOOP) + append session_trace
+```
+- **Altitude** : boucle externe déterministe (quel concept), dialogue interne agentique (comment questionner). La **conversation reste ouverte** (c'est la pédagogie — ne pas la scripter) ; ce qui l'entoure est déterministe.
+- **Borner la boucle interne** (max tours + sortie sur signal structuré) empêche le nœud agent de tourner à l'infini *et* alimente la distillation incrémentale (§4.6).
+- La qualité socratique (ton, ne pas donner la réponse, adaptativité) se **tune contre de vraies séances**, pas sur le papier. Assez bon pour démarrer ; itérer empiriquement.
+
+### 5.4 Sous-graphe `qa` — léger
+Q&A cadrée sur une leçon (notions importantes, niveau de maîtrise). Essentiellement un appel LLM sur leçon + mémoire (le "niveau de maîtrise" est même une simple lecture de `mastery`). Pas la boucle lourde du socratique.
+
+### 5.5 HIL — gate dur (réservé), modalité 2 étages
+Quand (et seulement quand) une action est dangereuse/irréversible (ex : overwrite d'une leçon existante) :
+```ts
+const decision = interrupt({ kind:"confirm_overwrite", lessonId, parsed, options:["replace","keep_both","cancel"] });
+```
+- **Le payload d'interrupt = le contrat back↔front** : son `kind` dit au front quel composant rendre. Surfacé comme **data part custom** dans le stream (`{ type:"data-confirm", … }`).
+- **Modalité à 2 étages** : (1) back = graphe en pause (checkpointer), ne peut avancer sans resume ; (2) front = `ConfirmCard` rendue + **input texte désactivé**.
+- ⚠️ **Re-run au resume** : au `Command({resume})`, **le nœud re-tourne depuis le haut** ; seul `interrupt()` renvoie la valeur reprise. → tout side-effect avant l'`interrupt()` doit être **idempotent (upsert)** ou placé *après*. **Ne jamais wrapper `interrupt()` dans un try/catch** (il fonctionne en levant une exception spéciale). Plusieurs interrupts dans un nœud = matchés par **index** → ordre fixe, inconditionnel.
+- Voir §6 pour le guard **resume-vs-new-message** côté handler.
+
+---
+
+## 6. Contrat API (front ↔ back) — **un seul endpoint**
+
+Un seul `/api/chat`. **Plus de `/api/ingest`, `/api/ingest/validate`, `/api/student/:lessonId`** — tout passe par le chat (ingestion, révision, Q&A, validation HIL).
+
+| Route | Méthode | Rôle | Réponse |
+|---|---|---|---|
+| `/api/chat` | POST | un tour conversationnel (intent détecté & routé en interne) | **stream UIMessageStream** (SSE) |
+
+- Handler **stateless**, chaque requête porte `thread_id`. Reçoit les messages, convertit via `toBaseMessages`, **reprend le graphe parent** par `thread_id`, streame (§7).
+- ⚠️ **Guard resume-vs-new-message** : en tête du handler, vérifier l'état d'interrupt (`graph.getState(config)` → `.tasks[].interrupts` / `.next`). Si le thread est **interrompu**, le POST suivant doit devenir un `graph.stream(new Command({ resume: … }), …)`, **pas** un nouveau `HumanMessage`. Sinon le "oui" de l'enfant est re-classifié comme un nouvel intent. Le front marque explicitement un envoi "resume" (cf. §8).
+- **Résolution de leçon** (pour "fais-moi réviser la leçon 13") : un resolver déterministe mappe une référence → `lesson.id` (par titre/numéro), alimente `activeLessonId` dans l'état.
+
+---
+
+## 7. Design du streaming
+
+- **SSE via UIMessageStream sur HTTP simple. Pas de WebSocket** (interaction = requête → réponse streamée, en tours). Documenter ce choix (jugement pilier D).
+- **Stream hétérogène → démuxer par type** (le côté producteur du rendu parts-based §8) :
+  - **Texte** (nœud socratique, récap d'ingestion en prose) = **tokens**, `streamMode:["messages"]`.
+  - **Signaux non-prose** (carte de confirmation HIL, progression, futur aperçu structuré) = **data parts**, `streamMode:["messages","custom"]` + writer.
+  - Le nœud `classify` n'est pas streamé à l'UI (interne).
+- En **v1 texte-seul**, la sortie user-facing de l'ingestion (le récap) = des tokens, comme le socratique. Les data parts n'arrivent qu'avec les signaux non-prose (à commencer par le `data-confirm` du HIL).
+
+```ts
+// version basique (texte) :
+const stream = graph.stream(input, { streamMode:["messages"], configurable:{ thread_id } });
+return createUIMessageStreamResponse({ stream: toUIMessageStream(stream) });
+
+// dès qu'on émet des data-* (HIL, etc.) — additif, pas une refonte :
+const stream = createUIMessageStream({ execute: async ({ writer }) => {
+  writer.merge(toUIMessageStream(graph.stream(input, { streamMode:["messages","custom"], configurable:{ thread_id } })));
+  // l'interrupt remonté est émis en { type:"data-confirm", id, data } (voir §5.5)
+}});
+return createUIMessageStreamResponse({ stream });
+```
+
+- ⚠️ **Seam Fastify** : `createUIMessageStreamResponse` renvoie un **Web `Response`** ; piper son `ReadableStream` dans la `reply` Fastify (`Readable.fromWeb()`), headers `text/event-stream`, **désactiver toute compression qui re-bufferise**.
+- ⚠️ **Rendu de l'interrupt en UI non documenté** par l'adaptateur AI SDK → prévoir du glue (émettre un `data-*` part, le rendre côté client). Pas turnkey.
+
+---
+
+## 8. Frontend
+
+- `useChat<TutorUIMessage>` **typé** (le `UIMessage` custom centralise les data parts — voir §8.1).
+- **Rendu parts-based dès le jour 1** :
+
+```tsx
+{message.parts.map((part) => {
+  switch (part.type) {
+    case "text": return <Bubble role={message.role}>{part.text}</Bubble>;
+    case "data-confirm": return <ConfirmCard data={part.data} onChoice={sendResume} />; // HIL gate dur
+    // case "data-exercise": …  // ← itération future, additif
+    default: return null;
+  }
+})}
+```
+
+- **UX threads (décision 09/06)** : **pas d'historique de discussions type ChatGPT.** Lancement de l'app → **nouveau thread**. Kill + réouverture → **nouveau thread**, pas d'accès aux anciens, pas de "rejump". La continuité vient de la **mémoire durable** (DB), pas du log de chat. Bénéfices : UX triviale pour une enfant + contexte borné (on hydrate la mémoire pertinente dans un thread frais).
+- **HIL** : sur réception d'un `data-confirm`, rendre la `ConfirmCard` + **désactiver l'input**. Le bouton envoie un **resume** (pas un message normal). Au reload pendant un interrupt, re-détecter l'état (`graph.getState`) et re-render la carte.
+- **Panneau "modèle élève"** = **optionnel** pour le MVP (l'endpoint `/api/student` a été supprimé). Si désiré, l'alimenter via un **data part** émis dans le stream, sinon différer. Garder le rendu parts-based prêt.
+- Store d'état léger (Zustand) minimal — prêt à devenir le hub si une UI partagée arrive, **non sollicité pour l'instant**.
+
+### 8.1 Type central des messages (point d'évolution)
+```ts
+// packages/shared
+export type TutorUIMessage = UIMessage<NoMetadata, {
+  confirm: { kind: string; /* payload d'interrupt */ };   // HIL
+  // ajouter ici les data parts futures (exercise, mascot…) → typage centralisé
+}>;
+```
+
+---
+
+## 9. État / statefulness
+
+**Verdict : handlers HTTP stateless ; état externalisé. Working memory (jetable) ≠ long-term memory (durable).**
+
+- **Handlers Fastify = stateless** : chaque requête self-contained, identifiée par `thread_id`. Aucune affinité mémoire.
+- **Checkpointer LangGraph (`PostgresSaver`)** = **working memory** : état conversation/graphe par `thread_id` (messages du tour, position, état d'`interrupt`). **Sur le graphe parent uniquement** (se propage aux sous-graphes ; le passer à un sous-graphe est silencieusement ignoré). `thread_id` ≠ PK de leçon.
+- **DB Postgres (modèle élève + leçons + concepts + maîtrise)** = **long-term memory** durable, traverse les threads.
+- **Thread jetable** : nouveau `thread_id` à chaque lancement d'app (cf. §8). On ne resume pas automatiquement les threads interrompus ; les threads orphelins restent inertes (GC périodique). Orphelin ≠ corrompu.
+- **Quit pendant un interrupt = sûr par construction** : en cas succès la donnée est écrite *avant* tout interrupt (draft cohérent) ; l'interrupt gate dur ne mute le dangereux qu'*après* résolution → si l'enfant quitte, la mutation dangereuse n'a simplement jamais lieu. **Règle** : faire de chaque frontière d'interrupt un **point de pause sûr** (rien d'irréversible à moitié fait à cheval). Drafts non confirmés = cohérents (utilisables ou GC).
+- **Jamais de mémoire durable conditionnée à un exit propre** → distillation incrémentale (§4.6).
+
+---
+
+## 10. Observabilité + coût (étape ultérieure — pilier C)
+
+OpenTelemetry → **Langfuse** (obs + eval + coût en un outil). **Coût/séance câblé à la main via le SDK.** ⚠️ Si un nœud = harness d'agent complet, le coût/obs ne remonte pas tout seul → instrumenter à la main. La **distillation incrémentale** (plus d'appels) et la **factory par-rôle** (coût par modèle/rôle) sont les angles coût à montrer. **Scaffolder mais câbler après que les flows cœur tournent.**
+
+## 11. Eval (étape ultérieure — pilier B)
+
+Méthode : **d'abord produire du structuré** (feuille Q/R + signaux de maîtrise parsables), *puis* 2 LLM-as-judge : (1) factuel (ex : "1789" pour la Révolution), (2) socratique (n'a pas donné la réponse). La `precision_bar` du concept calibre le juge factuel. 10-20 cas. Via Langfuse. Leçon d'ingénierie : **l'eval force le structured output.** Les tables `*_history` fournissent gratuitement un dataset de debug/éval.
+
+---
+
+## 12. Séquence de build (l'ordre à suivre)
+
+0. **Scaffold** monorepo (pnpm + Turbo, `docker-compose` avec Postgres, package `shared`, schéma DB + migrations, factory modèle par-rôle, graphe parent + sous-graphes vides, Fastify `/api/chat` qui répond). Vérifier l'API AI SDK v6 (§2).
+1. **Schéma mémoire DB** (tables état + history, concept/mastery/student_profile/session_trace) + **applier d'opérations déterministe** (ADD/UPDATE/DELETE/NOOP) + repos de lecture/hydratation. **Seed des fixtures à la main** (1-2 leçons + concepts) pour débloquer le cœur sans dépendre de l'ingestion.
+2. **Tranche verticale `revise`** (le cœur / le skill nommable) : router → sous-graphe revise (boucle externe concepts + dialogue socratique borné + signal de maîtrise) + **update mémoire incrémental déterministe** + streaming tokens, bout-en-bout depuis le client React. Sur fixtures seedées.
+3. **Ingestion conversationnelle** (optimiste, draft + récap) + **HIL gate dur** (interrupt → data-confirm + guard resume) + intent `qa`. (L'ingestion n'est plus le "warm-up trivial" — elle a le HIL ; c'est pour ça qu'elle vient après le cœur.)
+4. **Approfondir le moat** : eval (B) + observabilité/coût (C). Profondeur, pas largeur.
+5. **Durcir + writeup + conteneuriser** : docker compose propre, code propre, **writeup technique** (altitude par nœud, workflow-vs-agent/router, **design mémoire : 2 formes, politique d'écriture, audit/rollback, working vs long-term**) = artefact public obligatoire.
+
+**Stretch (seulement si core fini tôt)** : édition chirurgicale de leçon ; intent curiosité ouverte cadrée ; boucle d'auto-amélioration du skill ; OpenCode + DeepSeek pour le coût ; eval élargie ; garde-fous drift/poisoning. **Pas avant.**
+
+---
+
+## 13. Définition de "shipped" (le ship du cycle = lot 2, coupe 17/06)
+
+Sur **2-3 séances réelles** via l'app React (un seul chat) :
+1. **Router workflow déterministe** (classify → sous-graphes) ; cœur `revise` bout-en-bout ; **mémoire DB modélisée** (concept/mastery, 2 formes) ; **update = applier déterministe** ADD/UPDATE/DELETE/NOOP avec history/provenance.
+2. **Distillation incrémentale** démontrable (mémoire à jour même sans fin de séance propre).
+3. Observabilité + coût/séance câblés (Langfuse/OTel) : un chiffre + des traces.
+4. **Une** eval LLM-as-judge (factuel + socratique).
+5. Writeup technique (altitude par nœud + design mémoire + working-vs-long-term + politique d'écriture/rollback).
+Le tout conteneurisé (docker compose : backend + Postgres), prêt-à-déployer (non déployé).
+
+---
+
+## 14. Non-goals explicites (ce cycle)
+
+- ❌ Mascotte / UI centrale interactive → archi *compatible*, **non construite**.
+- ❌ Composants UI custom par question → **itération future**, garder le rendu parts-based prêt.
+- ❌ Hébergement / cloud / auth / multi-élève (docker compose local ≠ hébergement).
+- ❌ Vector DB / RAG (corpus tient en contexte — le refus est un argument).
+- ❌ **Modification chirurgicale / conversationnelle d'une leçon** (éditer un concept précis, dialogue "quoi changer / par quoi"). Ouvre une vraie complexité : résolution de référence ("la leçon 13" → quelle ligne), sous-spécification → dialogue de clarification, et surtout **ripple sur concepts/maîtrise** (éditer un concept casse les lignes `mastery` qui le référencent). **Correction MVP = ré-ingestion / replace** (réutilise le flow d'ingestion + le gate d'overwrite dur, donc aucune détection de "phase modification" à coder). Édition chirurgicale = itération future. *(décidé 09/06, tour de conception lot 2)*
+- ❌ **Intent "curiosité ouverte cadrée leçon"** → différé (l'enum fermé + `out_of_scope` est en place pour l'accueillir).
+- ❌ **Historique de threads / multi-thread UX** (type ChatGPT) → thread jetable, nouveau à chaque lancement (§8, §9).
+- ❌ Pré-seeding de lignes `mastery` "not_assessed" → l'inconnu = absence de ligne (§4.4).
+- ❌ Multi-agent orchestration. WebSocket. Resumable streams (sauf si trivial).
+
+---
+
+## 15. Hypothèses / décisions (corriger si besoin)
+
+- **DB = PostgreSQL** (acté 09/06 ; local docker compose). Accès via **Prisma** (choisi 09/06 pour la familiarité ; ORM batteries-included). **History tables écrites en code applier (transaction), pas triggers.**
+- **Provider LLM par défaut = Anthropic Claude**, via **factory par-rôle provider-agnostique** (swappable `@langchain/openai` etc.).
+- **Node 20+**, **pnpm**.
+- Tranche produit : **CM2 × Histoire**, plusieurs leçons (mais garder le modèle générique multi-matières : pas de `kind` subject-specific, `precision_bar` générique).
+- AI SDK **v6** — API exacte à vérifier contre la version installée (§2).
+- Repo de code = **nouveau repo séparé** (pas ce repo de recherche).
