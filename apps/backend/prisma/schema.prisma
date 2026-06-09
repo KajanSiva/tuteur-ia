@@ -1,0 +1,21 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// Static student identity (not the evolving pedagogical profile).
+// display_name is used to address the child; grade_level/age calibrate
+// language, difficulty and expected precision.
+model Student {
+  id          String   @id @default(uuid())
+  displayName String   @map("display_name")
+  gradeLevel  String   @map("grade_level")
+  age         Int?
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  @@map("student")
+}
