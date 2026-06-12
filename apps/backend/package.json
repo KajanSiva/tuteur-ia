@@ -9,6 +9,7 @@
     "start": "node dist/server.js",
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate dev",
+    "db:seed": "tsx prisma/seed.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
