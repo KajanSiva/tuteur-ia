@@ -25,70 +25,70 @@ function readLesson(file: string): string {
 }
 
 const STUDENT = {
-  id: "student-demo",
+  id: "10000000-0000-4000-8000-000000000001",
   displayName: "Camille",
   gradeLevel: "CM2",
 };
 
 const LESSONS: LessonSeed[] = [
   {
-    id: "lesson-theme-11",
+    id: "11111111-1111-4111-8111-111111111111",
     title: "Du Premier Empire à la Troisième République",
     theme: 11,
     file: "theme-11-premier-empire-troisieme-republique.md",
     concepts: [
       {
-        id: "c11-chute-napoleon-waterloo",
+        id: "11111111-1111-4111-8111-000000000101",
         label: "La chute de Napoléon Ier et la défaite de Waterloo",
         precisionBar: "exact",
         precisionNote: "Date attendue : 18 juin 1815.",
       },
       {
-        id: "c11-monarchie-constitutionnelle",
+        id: "11111111-1111-4111-8111-000000000102",
         label: "La monarchie constitutionnelle (vs monarchie absolue)",
         precisionBar: "intermediate",
         precisionNote:
           "Les citoyens les plus riches élisent des députés qui votent les lois et le budget.",
       },
       {
-        id: "c11-rois-restauration",
+        id: "11111111-1111-4111-8111-000000000103",
         label: "Les rois après l'Empire : Louis XVIII, Charles X, Louis-Philippe",
         precisionBar: "exact",
         precisionNote: "Connaître l'ordre et les règnes (1814–1848).",
       },
       {
-        id: "c11-trois-glorieuses",
+        id: "11111111-1111-4111-8111-000000000104",
         label: "Les Trois Glorieuses",
         precisionBar: "exact",
         precisionNote: "27–29 juillet 1830.",
       },
       {
-        id: "c11-napoleon-iii-second-empire",
+        id: "11111111-1111-4111-8111-000000000105",
         label: "Louis Napoléon Bonaparte, Napoléon III et le Second Empire",
         precisionBar: "intermediate",
         precisionNote:
           "Élu président de la IIe République, il proclame le Second Empire (1852).",
       },
       {
-        id: "c11-modernisation-haussmann",
+        id: "11111111-1111-4111-8111-000000000106",
         label: "La modernisation sous Napoléon III (Haussmann, transports)",
         precisionBar: "global",
         precisionNote: null,
       },
       {
-        id: "c11-sedan-fin-second-empire",
+        id: "11111111-1111-4111-8111-000000000107",
         label: "La défaite de Sedan et la fin du Second Empire",
         precisionBar: "exact",
         precisionNote: "2 septembre 1870.",
       },
       {
-        id: "c11-troisieme-republique",
+        id: "11111111-1111-4111-8111-000000000108",
         label: "La proclamation de la Troisième République",
         precisionBar: "exact",
         precisionNote: "Septembre 1870 ; régime en vigueur de 1870 à 1940.",
       },
       {
-        id: "c11-symboles-republique",
+        id: "11111111-1111-4111-8111-000000000109",
         label: "Les symboles de la République",
         precisionBar: "intermediate",
         precisionNote: "Bonnet phrygien, drapeau tricolore, corne d'abondance…",
@@ -96,57 +96,57 @@ const LESSONS: LessonSeed[] = [
     ],
   },
   {
-    id: "lesson-theme-12",
+    id: "22222222-2222-4222-8222-222222222222",
     title: "L'école primaire gratuite, laïque et obligatoire",
     theme: 12,
     file: "theme-12-ecole-gratuite-laique-obligatoire.md",
     concepts: [
       {
-        id: "c12-travail-des-enfants",
+        id: "22222222-2222-4222-8222-000000000201",
         label: "Le travail des enfants au XIXe siècle",
         precisionBar: "global",
         precisionNote: "Avant les lois scolaires : champs, mine, atelier, usine.",
       },
       {
-        id: "c12-conditions-travail-villerme",
+        id: "22222222-2222-4222-8222-000000000202",
         label: "Les conditions de travail des enfants (témoignage de Villermé)",
         precisionBar: "intermediate",
         precisionNote: null,
       },
       {
-        id: "c12-loi-1881-gratuite",
+        id: "22222222-2222-4222-8222-000000000203",
         label: "La loi de 1881 : l'école gratuite (Jules Ferry)",
         precisionBar: "exact",
         precisionNote: "1881 ; Jules Ferry, ministre de l'Instruction.",
       },
       {
-        id: "c12-loi-1882-laique",
+        id: "22222222-2222-4222-8222-000000000204",
         label: "La loi de 1882 : l'école laïque",
         precisionBar: "exact",
         precisionNote:
           "1882 ; le catéchisme remplacé par l'instruction civique et morale.",
       },
       {
-        id: "c12-loi-1882-obligatoire",
+        id: "22222222-2222-4222-8222-000000000205",
         label: "La loi de 1882 : l'école obligatoire (6 à 13 ans)",
         precisionBar: "exact",
         precisionNote: "Obligatoire pour les filles et garçons de 6 à 13 ans.",
       },
       {
-        id: "c12-laicite",
+        id: "22222222-2222-4222-8222-000000000206",
         label: "La laïcité",
         precisionBar: "intermediate",
         precisionNote: "Laïque = indépendant des religions.",
       },
       {
-        id: "c12-consequences-alphabetisation",
+        id: "22222222-2222-4222-8222-000000000207",
         label: "Les conséquences : recul du travail des enfants et alphabétisation",
         precisionBar: "global",
         precisionNote:
           "Au début du XXe siècle, la majorité des Français savent lire et écrire.",
       },
       {
-        id: "c12-organisation-ecole",
+        id: "22222222-2222-4222-8222-000000000208",
         label: "L'école à cette époque (classes séparées, matières, discipline)",
         precisionBar: "global",
         precisionNote: null,
