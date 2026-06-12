@@ -14,6 +14,7 @@ Tailwind v4 + shadcn/ui) · `packages/shared` (shared TS contracts).
 
 - `pnpm dev` — backend (:3001) + frontend (:5173) together
 - `pnpm build` / `pnpm typecheck` — all packages
+- `pnpm test` — needs Postgres up; auto-provisions a dedicated `tuteur_test` DB
 - `docker compose up -d postgres` then `pnpm --filter @tuteur/backend db:migrate`
 
 The Prisma 7 client is generated (gitignored) into `apps/backend/src/generated`;
