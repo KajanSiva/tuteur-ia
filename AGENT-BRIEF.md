@@ -82,8 +82,8 @@ tuteur-ia-lot2/
 │   │       │   ├── revise.graph.ts    # sous-graphe "Réviser" (le cœur)
 │   │       │   └── qa.graph.ts        # sous-graphe "Q&A sur une leçon"
 │   │       ├── nodes/           # nœuds (déterministes + LLM)
-│   │       ├── memory/          # repositories DB + applier d'opérations (déterministe) ; hydratation
-│   │       ├── db/              # schéma, migrations, client Kysely
+│   │       ├── memory/          # repos lecture + hydratation + applier (politique PURE + coquille tx) + contrat d'ops zod
+│   │       ├── db/              # client Prisma 7 (driver adapter pg) ; schéma + migrations sous prisma/
 │   │       ├── llm/             # factory modèles par-rôle, schémas zod, structured output
 │   │       ├── streaming/       # seam LangGraph → UIMessageStream → Fastify reply ; interrupt → data part
 │   │       └── checkpoint/      # PostgresSaver (checkpointer LangGraph)
@@ -113,11 +113,13 @@ La mémoire durable vit en **Postgres**, pas en fichiers markdown. Elle est **di
 - **Forme "collection" — des faits qui s'accumulent et disparaissent, une ligne par fait.** Ex : `mastery` par concept, `observation` (optionnel). Op-set = **ADD / UPDATE / DELETE / NOOP** complet.
 
 ### 4.2 Pattern transversal : table d'état courant **+** table d'historique
-Pour **chaque entité mutable** par un nœud LLM : une table **état courant** (le read-model, lu à chaque séance, O(1)) **+** une table **`*_history`** append-only (audit/rollback, jamais dans le hot path). L'applier écrit l'état courant **et** append à l'history dans **la même transaction** (trigger `AFTER UPDATE/DELETE` ou code). Le LLM ne lit **que** l'état courant.
+Pour **chaque entité mutable** par un nœud LLM : une table **état courant** (le read-model, lu à chaque séance, O(1)) **+** une table **`*_history`** append-only (audit/rollback, jamais dans le hot path). L'applier écrit l'état courant **et** append à l'history dans **la même transaction**, **en code applier — pas par trigger DB** (décision 12/06). L'history = un **log append-only d'opérations** : une ligne par op appliquée = snapshot **résultant** + provenance + `version` + `recorded_at` (voir §4.6). Le LLM ne lit **que** l'état courant.
 
 > ❌ Ne PAS faire de l'history-only avec reconsolidation à la lecture : ça force un fold sur N lignes + une reconsolidation **non-déterministe** par le LLM à chaque lecture = on perd le "compounding par distillation". L'état consolidé doit être **matérialisé**.
 
 ### 4.3 Entités & schéma (Postgres ; esquisse à affiner à l'init)
+
+> **IDs (décision 12/06) :** tous les `id` et FK = **uuid natif Postgres** (`@db.Uuid`, `@default(uuid(7))` — ordonné dans le temps pour la localité d'index). Pas de texte libre, pas d'auto-incrément (l'applier doit pouvoir générer/référencer un id avant insert).
 
 ```sql
 student(id, display_name, grade_level, age, created_at)
@@ -125,22 +127,25 @@ student(id, display_name, grade_level, age, created_at)
 -- grade_level/age = calibrer langage/difficulté/précision attendue. Consommé par socratic, ingest_parse, judge.
 
 -- LEÇON : blob non structuré + métadonnées légères
-lesson(id, subject, title, content_md TEXT, metadata JSONB, status, created_at, updated_at)
--- status ∈ {draft, confirmed, revised} (cycle de vie, voir ingestion optimiste §5.2)
-lesson_source_image(id, lesson_id FK, path, ordinal)
+lesson(id, subject, title, content_md TEXT, metadata JSONB, created_at, updated_at)
+-- ⏳ `status` RETIRÉ de l'étape 1 (décision 12/06) → réintroduit avec l'ingestion : le cycle de vie
+--    {draft, confirmed, revised} est sous-spécifié tant que le flow optimiste §5.2 n'existe pas (pas de transition
+--    draft→confirmed définie). `revise` ne s'en sert pas. À définir contre le vrai flow.
+lesson_source_image(id, lesson_id FK, path, ordinal)   -- ⏳ différé à l'ingestion
 -- images sources persistées (volume local, ordre préservé). Permet : correction=re-ingest sans re-photographier,
 -- debug de la qualité d'extraction, et REPLAY déterministe pour l'éval (pilier B).
 
 -- CONCEPT : unité enseignable, extraite à l'ingestion. = le "dénominateur" d'une leçon.
-concept(id, lesson_id FK, label, precision_bar, created_at)
--- precision_bar = barre de maîtrise attendue. Échelle ordinale légère {exact, intermédiaire, global}
---   + note texte libre optionnelle. PAS de champ `kind` (taxonomie subject-specific = prématuré,
---   ne généralise pas en enum à travers histoire/sciences/maths ; precision_bar porte la charge actionnable).
+concept(id, lesson_id FK, label, precision_bar, precision_note, created_at)
+-- precision_bar = barre de maîtrise attendue. Enum {exact, intermediate, global} + precision_note (texte libre,
+--   optionnel). PAS de champ `kind` (taxonomie subject-specific = prématuré, ne généralise pas en enum à travers
+--   histoire/sciences/maths ; precision_bar porte la charge actionnable).
 
 -- MAÎTRISE : overlay par (élève, concept). FORME COLLECTION.
 mastery(student_id FK, concept_id FK, level, rationale TEXT, version,
         changed_by, run_id, confidence, is_locked, valid_from)  -- PK(student_id, concept_id)
-mastery_history(... mêmes colonnes + valid_to)   -- append-only
+-- level = enum {emerging, developing, secure} (décision 12/06) ; is_locked défaut FALSE (mastery = donnée).
+mastery_history(... colonnes snapshot + op, reason, recorded_at)  -- append-only event log (PAS de valid_to)
 
 -- PROFIL GLOBAL ÉLÈVE : contrat de propriétés PÉDAGOGIQUES (pas l'identité, qui est sur `student`).
 -- FORME ÉTAT (colonnes typées TEXT, contenu free-text). Principe : une propriété mérite sa colonne
@@ -151,8 +156,9 @@ student_profile(student_id FK PK,
   learning_style    TEXT,   -- format/rythme/modalités qui marchent (ex: "questions courtes, une à la fois ; brèves OK ; exemples concrets") → comment questionner
   motivation_levers TEXT,   -- ce qui l'encourage (ex: "félicitations enthousiastes sur une série de bonnes réponses")       → ton de renforcement
   friction_to_avoid TEXT,   -- déclencheurs de décrochage à éviter (ex: "trop de questions d'affilée ; longues lectures ; se sentir jugée") → garde-fous
-  version, changed_by, run_id, updated_at)
-student_profile_history(... + valid_to)
+  is_locked, version, changed_by, run_id, updated_at)
+-- is_locked défaut TRUE (mémoire procédurale qui pilote le tuteur ; n'écrit que sur op `force` explicite et loggée).
+student_profile_history(... colonnes snapshot + op, reason, recorded_at)   -- append-only event log
 -- Colonnes typées (pas EAV, pas JSONB) : la DB enforce présence + contrat code zod ↔ DB 1:1.
 -- Démarrent VIDES ("à apprendre"), se remplissent au fil des séances (= le compounding). Évolution du contrat = migration propre (rare).
 -- ❌ Pas de champ "notes diverses"/placeholder sans consommateur.
@@ -184,12 +190,14 @@ Règles :
 - **Forme état** (`student_profile`) → l'op-set se réduit en pratique à **UPDATE-merge / NOOP** par champ.
 - **Forme collection** (`mastery`, `observation`) → op-set complet (ADD = 1re évaluation, UPDATE = affiner, DELETE = concept retiré/contredit).
 - `zod` garantit la **forme**, pas la **vérité** du texte. Validation verte ≠ contenu correct.
-- **Verrou par défaut (`is_locked`)** sur les champs qui *pilotent le comportement* du tuteur (mémoire "procédurale", écriture plus risquée) : ils ne changent que sur opération explicite et loggée.
+- **Verrou par défaut (`is_locked`)** sur les champs qui *pilotent le comportement* du tuteur (mémoire "procédurale", écriture plus risquée) : ils ne changent que sur opération explicite et loggée (flag `force`).
+- **Structure de l'applier (functional core / imperative shell, décision 12/06)** : une **décision PURE** `decideMasteryAction(état_courant, op) → action` porte toute la politique (merge par champ, NOOP, garde `is_locked`/`force`, add↔update normalisé selon présence) — testée **sans DB**, exhaustivement. Une **coquille transactionnelle** lit l'état, appelle la décision, puis écrit état courant **+** ligne d'history. Le `merge` est **par champ** : un champ non fourni par l'op (`undefined`) est **gardé** ; `null` explicite efface (c'est l'enforcement déterministe de "silence ≠ contradiction"). `version` monotone calculée depuis le max history (robuste au delete/re-add).
 
 ### 4.6 Audit / visibilité / rollback
-- Chaque op appliquée écrit une ligne d'history avec **provenance** : `ancienne_valeur, nouvelle_valeur, op, raison, changed_by (nom du nœud), run_id (thread/run LangGraph), confidence, ts`.
+- Chaque op appliquée écrit une ligne d'history = **snapshot RÉSULTANT (l'état après l'op)** + **provenance** : `op, raison, changed_by (nom du nœud), run_id (thread/run LangGraph), confidence, version, recorded_at`. **Pas de stockage `ancienne_valeur`+`nouvelle_valeur`** (décision 12/06) : la valeur d'avant = la version N-1 de la timeline, on ne duplique pas.
 - **Visibilité** = lire la timeline d'une cible (`SELECT … FROM *_history WHERE … ORDER BY version`) : quoi, quand, par quel nœud, avec quelle confiance.
-- **Rollback** = réécrire la version N de l'history comme état courant (le rollback se logge à son tour). Rien n'est détruit.
+- **Rollback** = lire la version N → la **rejouer comme une nouvelle op** (via l'applier, `force: true`). Se logge à son tour (nouvelle version), rien n'est détruit.
+- ⏳ **Visibilité + rollback différés à l'étape 4** (profondeur du moat, décision 12/06) : la **donnée versionnée est déjà en place** (l'applier écrit l'history à chaque op) ; il ne reste qu'à câbler la lecture de timeline et la fonction de restauration (un read + un replay) — elles **réutilisent l'applier**, aucune logique de mutation nouvelle.
 - Visibilité et rollback = **le même mécanisme** (le journal d'opérations EST la piste d'audit). Défense en profondeur : la politique d'écriture *réduit* les mauvaises écritures, l'history *rattrape* celles qui passent.
 - ⚠️ **Le checkpointer LangGraph ≠ rollback de mémoire domaine.** Il versionne l'**état d'exécution du graphe par `thread_id`** (rewind d'une conversation). Tes tables d'history versionnent le **modèle élève**. Deux axes différents — ne pas confondre.
 
@@ -375,7 +383,7 @@ Méthode : **d'abord produire du structuré** (feuille Q/R + signaux de maîtris
 1. **Schéma mémoire DB** (tables état + history, concept/mastery/student_profile/session_trace) + **applier d'opérations déterministe** (ADD/UPDATE/DELETE/NOOP) + repos de lecture/hydratation. **Seed des fixtures à la main** (1-2 leçons + concepts) pour débloquer le cœur sans dépendre de l'ingestion.
 2. **Tranche verticale `revise`** (le cœur / le skill nommable) : router → sous-graphe revise (boucle externe concepts + dialogue socratique borné + signal de maîtrise) + **update mémoire incrémental déterministe** + streaming tokens, bout-en-bout depuis le client React. Sur fixtures seedées.
 3. **Ingestion conversationnelle** (optimiste, draft + récap) + **HIL gate dur** (interrupt → data-confirm + guard resume) + intent `qa`. (L'ingestion n'est plus le "warm-up trivial" — elle a le HIL ; c'est pour ça qu'elle vient après le cœur.)
-4. **Approfondir le moat** : eval (B) + observabilité/coût (C). Profondeur, pas largeur.
+4. **Approfondir le moat** : eval (B) + observabilité/coût (C) + **visibilité/rollback mémoire** (timeline d'history + restauration par replay via l'applier — la donnée versionnée est déjà là dès l'étape 1). Profondeur, pas largeur.
 5. **Durcir + writeup + conteneuriser** : docker compose propre, code propre, **writeup technique** (altitude par nœud, workflow-vs-agent/router, **design mémoire : 2 formes, politique d'écriture, audit/rollback, working vs long-term**) = artefact public obligatoire.
 
 **Stretch (seulement si core fini tôt)** : édition chirurgicale de leçon ; intent curiosité ouverte cadrée ; boucle d'auto-amélioration du skill ; OpenCode + DeepSeek pour le coût ; eval élargie ; garde-fous drift/poisoning. **Pas avant.**
@@ -416,3 +424,14 @@ Le tout conteneurisé (docker compose : backend + Postgres), prêt-à-déployer 
 - Tranche produit : **CM2 × Histoire**, plusieurs leçons (mais garder le modèle générique multi-matières : pas de `kind` subject-specific, `precision_bar` générique).
 - AI SDK **v6** — API exacte à vérifier contre la version installée (§2).
 - Repo de code = **nouveau repo séparé** (pas ce repo de recherche).
+
+### Décisions actées 12/06 (build scaffold + étape 1 mémoire)
+- **Prisma 7** (pas 6) : config via `prisma.config.ts` (datasource `url`), **driver adapter** `@prisma/adapter-pg`, générateur `prisma-client` → client TS dans `apps/backend/src/generated` (**gitignoré**, régénéré par `db:generate`/`db:migrate`). `@db.Uuid` + `@default(uuid(7))` sur tous les id/FK.
+- **History = log append-only** : une ligne par op = snapshot **résultant** + provenance + `version` + `recorded_at`. **Pas** de `valid_to`/intervalles bitemporels (version + snapshot suffisent pour visibilité/rollback). Écrite **en code applier (transaction)**, pas par trigger.
+- **Enums (côté Prisma, source unique ; pas dans `shared` tant que le front ne les affiche pas)** : `precision_bar {exact, intermediate, global}` + `precision_note` · `mastery.level {emerging, developing, secure}` · `MemoryOp {add, update, delete, noop}`.
+- **`is_locked`** : défaut TRUE sur `student_profile` (mémoire procédurale), FALSE sur `mastery` ; surchargé par un flag `force` explicite et loggé.
+- **Applier = functional core / imperative shell** : décision PURE testée sans DB + coquille transactionnelle (§4.5).
+- **Différés à l'ingestion (étape 3)** : `lesson.status`, `lesson_source_image`, `observation`.
+- **Rollback + visibilité différés à l'étape 4** (la donnée versionnée est déjà produite par l'applier dès l'étape 1) — §4.6.
+- **Tests** : intégration sur base dédiée **`tuteur_test`** auto-provisionnée ; **vitest** en deux *projects* (`unit` sans DB / `integration` avec). Stratégie de test détaillée dans **CLAUDE.md**.
+- **Front (hors design mémoire)** : Tailwind v4 + shadcn/ui, thème custom "Atelier" (tokens CSS). Le front reste un client mince jetable jusqu'au câblage `useChat`/streaming (étape 2).
