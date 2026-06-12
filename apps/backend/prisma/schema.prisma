@@ -7,6 +7,26 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+enum PrecisionBar {
+  exact
+  intermediate
+  global
+}
+
+enum MasteryLevel {
+  emerging
+  developing
+  secure
+}
+
+// Operation kind recorded on every history row (the applier's op-set).
+enum MemoryOp {
+  add
+  update
+  delete
+  noop
+}
+
 // Static student identity (not the evolving pedagogical profile).
 // display_name is used to address the child; grade_level/age calibrate
 // language, difficulty and expected precision.
@@ -17,5 +37,142 @@ model Student {
   age         Int?
   createdAt   DateTime @default(now()) @map("created_at")
 
+  masteries     Mastery[]
+  profile       StudentProfile?
+  sessionTraces SessionTrace[]
+
   @@map("student")
+}
+
+// A lesson: unstructured blob plus light metadata.
+model Lesson {
+  id        String       @id @default(uuid())
+  subject   String
+  title     String
+  contentMd String   @map("content_md")
+  metadata  Json     @default("{}")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  concepts      Concept[]
+  sessionTraces SessionTrace[]
+
+  @@map("lesson")
+}
+
+// Teachable unit extracted from a lesson — the "denominator" of a lesson.
+// precision_bar is the expected mastery bar; precision_note holds an
+// optional free-text qualifier.
+model Concept {
+  id            String       @id @default(uuid())
+  lessonId      String       @map("lesson_id")
+  label         String
+  precisionBar  PrecisionBar @map("precision_bar")
+  precisionNote String?      @map("precision_note")
+  createdAt     DateTime     @default(now()) @map("created_at")
+
+  lesson    Lesson    @relation(fields: [lessonId], references: [id], onDelete: Cascade)
+  masteries Mastery[]
+
+  @@map("concept")
+}
+
+// Mastery overlay per (student, concept) — collection form. A missing row
+// means "unknown" (never assessed). is_locked guards behaviour-driving rows.
+model Mastery {
+  studentId  String       @map("student_id")
+  conceptId  String       @map("concept_id")
+  level      MasteryLevel
+  rationale  String?
+  confidence Float?
+  isLocked   Boolean      @default(false) @map("is_locked")
+  version    Int          @default(1)
+  changedBy  String       @map("changed_by")
+  runId      String?      @map("run_id")
+  validFrom  DateTime     @default(now()) @map("valid_from")
+
+  student Student @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  concept Concept @relation(fields: [conceptId], references: [id], onDelete: Cascade)
+
+  @@id([studentId, conceptId])
+  @@map("mastery")
+}
+
+// Append-only audit log for mastery. One row per applied op, holding the
+// resulting snapshot plus provenance. valid_to closes the version interval.
+model MasteryHistory {
+  id         String       @id @default(uuid())
+  studentId  String       @map("student_id")
+  conceptId  String       @map("concept_id")
+  level      MasteryLevel
+  rationale  String?
+  confidence Float?
+  isLocked   Boolean      @map("is_locked")
+  version    Int
+  changedBy  String       @map("changed_by")
+  runId      String?      @map("run_id")
+  op         MemoryOp
+  reason     String?
+  validFrom  DateTime     @map("valid_from")
+  validTo    DateTime     @default(now()) @map("valid_to")
+
+  @@index([studentId, conceptId, version])
+  @@map("mastery_history")
+}
+
+// Global pedagogical profile — state form (one row per student). The three
+// dimensions are injected into the Socratic system prompt and refined by the
+// session-analysis node (UPDATE-merge / NOOP). Locked by default: these drive
+// tutor behaviour, so they only change on an explicit op.
+model StudentProfile {
+  studentId        String   @id @map("student_id")
+  learningStyle    String?  @map("learning_style")
+  motivationLevers String?  @map("motivation_levers")
+  frictionToAvoid  String?  @map("friction_to_avoid")
+  isLocked         Boolean  @default(true) @map("is_locked")
+  version          Int      @default(1)
+  changedBy        String   @map("changed_by")
+  runId            String?  @map("run_id")
+  updatedAt        DateTime @default(now()) @updatedAt @map("updated_at")
+
+  student Student @relation(fields: [studentId], references: [id], onDelete: Cascade)
+
+  @@map("student_profile")
+}
+
+model StudentProfileHistory {
+  id               String   @id @default(uuid())
+  studentId        String   @map("student_id")
+  learningStyle    String?  @map("learning_style")
+  motivationLevers String?  @map("motivation_levers")
+  frictionToAvoid  String?  @map("friction_to_avoid")
+  version          Int
+  changedBy        String   @map("changed_by")
+  runId            String?  @map("run_id")
+  op               MemoryOp
+  reason           String?
+  validFrom        DateTime @map("valid_from")
+  validTo          DateTime @default(now()) @map("valid_to")
+
+  @@index([studentId, version])
+  @@map("student_profile_history")
+}
+
+// Episodic session trace, append-only, strongly tied to student + lesson.
+// Written incrementally during a session (transcript/summary grow).
+model SessionTrace {
+  id         String    @id @default(uuid())
+  studentId  String    @map("student_id")
+  lessonId   String    @map("lesson_id")
+  startedAt  DateTime  @default(now()) @map("started_at")
+  endedAt    DateTime? @map("ended_at")
+  transcript Json      @default("[]")
+  summary    String?
+  extraction Json?
+
+  student Student @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  lesson  Lesson  @relation(fields: [lessonId], references: [id], onDelete: Cascade)
+
+  @@index([studentId, lessonId])
+  @@map("session_trace")
 }
