@@ -19,7 +19,8 @@
     "@prisma/client": "^7.8.0",
     "@tuteur/shared": "workspace:*",
     "fastify": "^5.2.0",
-    "pg": "^8.21.0"
+    "pg": "^8.21.0",
+    "zod": "^4.4.3"
   },
   "devDependencies": {
     "@types/pg": "^8.20.0",

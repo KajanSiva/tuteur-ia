@@ -99,7 +99,7 @@ model Mastery {
 }
 
 // Append-only audit log for mastery. One row per applied op, holding the
-// resulting snapshot plus provenance. valid_to closes the version interval.
+// resulting snapshot plus provenance, ordered by version.
 model MasteryHistory {
   id         String       @id @default(uuid(7)) @db.Uuid
   studentId  String       @map("student_id") @db.Uuid
@@ -113,8 +113,7 @@ model MasteryHistory {
   runId      String?      @map("run_id")
   op         MemoryOp
   reason     String?
-  validFrom  DateTime     @map("valid_from")
-  validTo    DateTime     @default(now()) @map("valid_to")
+  recordedAt DateTime     @default(now()) @map("recorded_at")
 
   @@index([studentId, conceptId, version])
   @@map("mastery_history")
@@ -151,8 +150,7 @@ model StudentProfileHistory {
   runId            String?  @map("run_id")
   op               MemoryOp
   reason           String?
-  validFrom        DateTime @map("valid_from")
-  validTo          DateTime @default(now()) @map("valid_to")
+  recordedAt       DateTime @default(now()) @map("recorded_at")
 
   @@index([studentId, version])
   @@map("student_profile_history")
