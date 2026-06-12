@@ -16,6 +16,9 @@ Tailwind v4 + shadcn/ui) · `packages/shared` (shared TS contracts).
 - `pnpm build` / `pnpm typecheck` — all packages
 - `docker compose up -d postgres` then `pnpm --filter @tuteur/backend db:migrate`
 
+The Prisma 7 client is generated (gitignored) into `apps/backend/src/generated`;
+run `db:migrate` or `db:generate` before `typecheck`/`build` on a fresh checkout.
+
 Before starting dev servers, check that nothing stale already holds :3001 / :5173
 (EADDRINUSE bites otherwise) — kill leftovers first.
 
