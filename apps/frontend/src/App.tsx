@@ -3,9 +3,10 @@ import { Send, Sparkles } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { cn } from "@/lib/utils";
+import { ChatEmptyState } from "@/components/EmptyState";
+import { MessageBubble, type MessageRole } from "@/components/MessageBubble";
 
-type Message = { role: "user" | "assistant"; content: string };
+type Message = { role: MessageRole; content: string };
 
 export default function App() {
   const [messages, setMessages] = useState<Message[]>([]);
@@ -56,35 +57,11 @@ export default function App() {
       </header>
 
       <div className="flex-1 space-y-3 overflow-y-auto py-2">
-        {messages.length === 0 && (
-          <div className="rounded-3xl border border-dashed border-border bg-card/50 p-6 text-center text-sm text-muted-foreground">
-            Dis-moi par exemple{" "}
-            <span className="font-medium text-foreground">
-              « fais-moi réviser la leçon 13 »
-            </span>
-            .
-          </div>
-        )}
-
+        {messages.length === 0 && <ChatEmptyState />}
         {messages.map((m, i) => (
-          <div
-            key={i}
-            className={cn(
-              "flex",
-              m.role === "user" ? "justify-end" : "justify-start",
-            )}
-          >
-            <div
-              className={cn(
-                "max-w-[80%] whitespace-pre-wrap rounded-3xl px-4 py-2.5 text-sm shadow-sm",
-                m.role === "user"
-                  ? "rounded-br-lg bg-primary text-primary-foreground"
-                  : "rounded-bl-lg border border-border bg-card text-card-foreground",
-              )}
-            >
-              {m.content}
-            </div>
-          </div>
+          <MessageBubble key={i} role={m.role}>
+            {m.content}
+          </MessageBubble>
         ))}
       </div>
 
