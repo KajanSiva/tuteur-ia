@@ -1,70 +1,91 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+
+@custom-variant dark (&:is(.dark *));
+
+/* "Atelier" theme — warm, scholarly, curious. Plum primary on a cream
+   surface with an amber accent. Tuned away from the default slate/blue. */
 :root {
-  font-family: system-ui, sans-serif;
+  --radius: 1rem;
+
+  --background: oklch(0.985 0.012 85);
+  --foreground: oklch(0.29 0.02 55);
+  --card: oklch(0.995 0.008 85);
+  --card-foreground: oklch(0.29 0.02 55);
+  --popover: oklch(0.995 0.008 85);
+  --popover-foreground: oklch(0.29 0.02 55);
+  --primary: oklch(0.52 0.17 295);
+  --primary-foreground: oklch(0.99 0.01 295);
+  --secondary: oklch(0.94 0.03 85);
+  --secondary-foreground: oklch(0.35 0.04 75);
+  --muted: oklch(0.95 0.02 85);
+  --muted-foreground: oklch(0.5 0.03 70);
+  --accent: oklch(0.83 0.13 80);
+  --accent-foreground: oklch(0.3 0.06 70);
+  --destructive: oklch(0.58 0.2 27);
+  --border: oklch(0.9 0.02 80);
+  --input: oklch(0.9 0.02 80);
+  --ring: oklch(0.52 0.17 295);
+
+  --font-display: "Fraunces Variable", ui-serif, Georgia, serif;
+  --font-sans: ui-sans-serif, system-ui, sans-serif;
 }
 
-body {
-  margin: 0;
+.dark {
+  --background: oklch(0.22 0.02 290);
+  --foreground: oklch(0.94 0.01 85);
+  --card: oklch(0.26 0.02 290);
+  --card-foreground: oklch(0.94 0.01 85);
+  --popover: oklch(0.26 0.02 290);
+  --popover-foreground: oklch(0.94 0.01 85);
+  --primary: oklch(0.7 0.15 295);
+  --primary-foreground: oklch(0.2 0.03 290);
+  --secondary: oklch(0.32 0.03 290);
+  --secondary-foreground: oklch(0.92 0.01 85);
+  --muted: oklch(0.3 0.02 290);
+  --muted-foreground: oklch(0.7 0.02 290);
+  --accent: oklch(0.78 0.13 80);
+  --accent-foreground: oklch(0.25 0.05 70);
+  --destructive: oklch(0.6 0.19 27);
+  --border: oklch(0.34 0.02 290);
+  --input: oklch(0.34 0.02 290);
+  --ring: oklch(0.7 0.15 295);
 }
 
-.chat {
-  max-width: 640px;
-  margin: 0 auto;
-  padding: 1rem;
-  display: flex;
-  flex-direction: column;
-  gap: 1rem;
-  height: 100vh;
-  box-sizing: border-box;
+@theme inline {
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+
+  --font-sans: var(--font-sans);
+  --font-display: var(--font-display);
 }
 
-.messages {
-  flex: 1;
-  overflow-y: auto;
-  display: flex;
-  flex-direction: column;
-  gap: 0.5rem;
-}
-
-.bubble {
-  padding: 0.5rem 0.75rem;
-  border-radius: 0.75rem;
-  max-width: 80%;
-  white-space: pre-wrap;
-}
-
-.bubble.user {
-  align-self: flex-end;
-  background: #2563eb;
-  color: white;
-}
-
-.bubble.assistant {
-  align-self: flex-start;
-  background: #f1f5f9;
-}
-
-.composer {
-  display: flex;
-  gap: 0.5rem;
-}
-
-.composer input {
-  flex: 1;
-  padding: 0.5rem;
-  border: 1px solid #cbd5e1;
-  border-radius: 0.5rem;
-}
-
-.composer button {
-  padding: 0.5rem 1rem;
-  border: none;
-  border-radius: 0.5rem;
-  background: #2563eb;
-  color: white;
-  cursor: pointer;
-}
-
-.composer button:disabled {
-  opacity: 0.5;
-  cursor: default;
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply bg-background text-foreground font-sans antialiased;
+  }
 }
