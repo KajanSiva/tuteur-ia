@@ -1,7 +1,7 @@
 import { afterAll, afterEach, describe, expect, it } from "vitest";
 
-import { prisma } from "../src/db/client";
-import { hydrateForRevision } from "../src/memory/hydration";
+import { prisma } from "../db/client.js";
+import { hydrateForRevision } from "./hydration.js";
 
 const STUDENT = "10000000-0000-4000-8000-000000000001";
 const LESSON_11 = "11111111-1111-4111-8111-111111111111";

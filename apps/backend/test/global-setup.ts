@@ -2,7 +2,7 @@ import { execSync } from "node:child_process";
 
 import pg from "pg";
 
-import { baseDatabaseUrl, testDatabaseUrl, testDbName } from "./db-url";
+import { baseDatabaseUrl, testDatabaseUrl, testDbName } from "./db-url.js";
 
 // Provisions a dedicated, isolated test database (created if missing, then
 // migrated and seeded) before the suite runs.
