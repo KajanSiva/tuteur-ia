@@ -17,7 +17,9 @@ export type MasteryValues = {
 export type MasteryAction =
   | { kind: "insert"; values: MasteryValues }
   | { kind: "update"; values: MasteryValues }
-  | { kind: "delete" }
+  // The snapshot is the state being removed — the shell records it in history
+  // without re-reading the row.
+  | { kind: "delete"; snapshot: MasteryState }
   | { kind: "noop"; reason: string };
 
 // Pure write policy: given the current mastery state (null = unknown) and one
@@ -41,7 +43,7 @@ export function decideMasteryAction(
 
   if (op.op === "delete") {
     return current
-      ? { kind: "delete" }
+      ? { kind: "delete", snapshot: current }
       : { kind: "noop", reason: "nothing to delete" };
   }
 

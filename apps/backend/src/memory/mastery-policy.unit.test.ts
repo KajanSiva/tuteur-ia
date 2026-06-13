@@ -113,9 +113,10 @@ describe("decideMasteryAction", () => {
   });
 
   describe("delete", () => {
-    it("deletes an existing row on an explicit delete", () => {
+    it("deletes an existing row on an explicit delete, carrying its snapshot", () => {
       expect(decideMasteryAction(state(), op({ op: "delete" }))).toEqual({
         kind: "delete",
+        snapshot: state(),
       });
     });
 

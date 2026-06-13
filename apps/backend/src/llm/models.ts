@@ -15,12 +15,19 @@ export type Role =
 
 // Providers initChatModel can target. Each needs its @langchain/<provider>
 // package installed; only anthropic is installed today.
-export type ModelProvider =
-  | "anthropic"
-  | "openai"
-  | "google-genai"
-  | "groq"
-  | "mistralai";
+const PROVIDERS = [
+  "anthropic",
+  "openai",
+  "google-genai",
+  "groq",
+  "mistralai",
+] as const;
+
+export type ModelProvider = (typeof PROVIDERS)[number];
+
+function isProvider(value: string): value is ModelProvider {
+  return (PROVIDERS as readonly string[]).includes(value);
+}
 
 export type ModelConfig = {
   provider: ModelProvider;
@@ -52,7 +59,15 @@ export function resolveModelConfig(
   const base = DEFAULTS[role];
   const key = role.toUpperCase();
 
-  const provider = (env[`LLM_PROVIDER_${key}`] || base.provider) as ModelProvider;
+  let provider = base.provider;
+  const providerOverride = env[`LLM_PROVIDER_${key}`];
+  if (providerOverride) {
+    if (!isProvider(providerOverride)) {
+      throw new Error(`Unsupported LLM_PROVIDER_${key}: ${providerOverride}`);
+    }
+    provider = providerOverride;
+  }
+
   const model = env[`LLM_MODEL_${key}`] || base.model;
 
   const tempRaw = env[`LLM_TEMPERATURE_${key}`];
