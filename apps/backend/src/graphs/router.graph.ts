@@ -10,6 +10,7 @@ import type { Intent } from "@tuteur/shared";
 
 import { getModel } from "../llm/models.js";
 import { IntentSchema, routeOnIntent } from "./intent.js";
+import { reviseNode } from "./revise.js";
 
 // Parent graph state: the shared transcript plus the router's own scalars.
 // MessagesAnnotation supplies the append reducer for `messages`; scalars use the
@@ -34,16 +35,35 @@ Classe le DERNIER message de l'élève dans exactement une intention :
 - "out_of_scope" : message hors du cadre scolaire des leçons.
 Donne aussi une confidence entre 0 et 1.`;
 
+// We bind the schema as a forced tool and read the parsed tool-call args, rather
+// than withStructuredOutput: the latter's final parser throws under the graph's
+// `streamMode: messages` (it receives empty text → OUTPUT_PARSING_FAILURE).
 async function classify(state: typeof RouterState.State) {
-  const model = (await getModel("classifier")).withStructuredOutput(
-    IntentSchema,
-    { name: "classify_intent" },
+  const base = await getModel("classifier");
+  if (!base.bindTools) {
+    throw new Error("classifier model does not support tool calling");
+  }
+  const model = base.bindTools(
+    [
+      {
+        name: "classify_intent",
+        description: "Classe l'intention de l'élève.",
+        schema: IntentSchema,
+      },
+    ],
+    { tool_choice: "classify_intent" },
   );
-  const result = await model.invoke([
+  const response = await model.invoke([
     new SystemMessage(CLASSIFY_SYSTEM),
     ...state.messages,
   ]);
-  return { intent: result.intent, confidence: result.confidence };
+
+  // A malformed or missing classification routes to clarify (ask), never a guess.
+  const parsed = IntentSchema.safeParse(response.tool_calls?.[0]?.args);
+  if (!parsed.success) {
+    return { intent: null, confidence: 0 };
+  }
+  return { intent: parsed.data.intent, confidence: parsed.data.confidence };
 }
 
 function flowPlaceholder(flow: string) {
@@ -78,7 +98,7 @@ async function clarify() {
 export function buildRouterGraph() {
   return new StateGraph(RouterState)
     .addNode("classify", classify)
-    .addNode("revise", flowPlaceholder("revise"))
+    .addNode("revise", reviseNode)
     .addNode("qa", flowPlaceholder("qa"))
     .addNode("ingest", flowPlaceholder("ingest"))
     .addNode("out_of_scope", outOfScope)

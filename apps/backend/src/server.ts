@@ -3,7 +3,7 @@ import "dotenv/config";
 import { Readable } from "node:stream";
 import type { ReadableStream as NodeReadableStream } from "node:stream/web";
 
-import { toBaseMessages } from "@ai-sdk/langchain";
+import { toBaseMessages, toUIMessageStream } from "@ai-sdk/langchain";
 import cors from "@fastify/cors";
 import { INTENTS, type TutorUIMessage } from "@tuteur/shared";
 import {
@@ -14,7 +14,7 @@ import {
 import Fastify from "fastify";
 import { z } from "zod";
 
-import { buildRouterGraph } from "./graphs/router.graph.js";
+import { buildRouterGraph, type RouterState } from "./graphs/router.graph.js";
 
 const app = Fastify({ logger: true });
 
@@ -44,23 +44,47 @@ app.post("/api/chat", async (request, reply) => {
     messages: parsed.data.messages,
   });
   const messages = await toBaseMessages(uiMessages);
-  const state = await router.invoke(
-    { messages },
-    { configurable: { thread_id: threadId } },
-  );
 
-  const last = state.messages.at(-1);
-  const replyText =
-    last && typeof last.content === "string" ? last.content : "";
-
-  // Deterministic node replies are fixed text: emit them as a single UI text
-  // part. Token-by-token streaming of a model arrives with the socratic node.
   const stream = createUIMessageStream({
-    execute: ({ writer }) => {
-      const id = randomUUID();
-      writer.write({ type: "text-start", id });
-      writer.write({ type: "text-delta", id, delta: replyText });
-      writer.write({ type: "text-end", id });
+    execute: async ({ writer }) => {
+      const graphStream = await router.stream(
+        { messages },
+        {
+          streamMode: ["messages", "values"],
+          configurable: { thread_id: threadId },
+        },
+      );
+
+      // The socratic node streams its tokens (surfaced here as text parts);
+      // deterministic nodes emit a static message the adapter does not surface,
+      // so we fall back to writing their final text once the stream is drained.
+      let finalState: typeof RouterState.State | undefined;
+      const ui = toUIMessageStream<typeof RouterState.State>(graphStream, {
+        onFinish: (state) => {
+          finalState = state ?? undefined;
+        },
+      });
+
+      const reader = ui.getReader();
+      let streamedText = false;
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        if (value.type === "text-delta") streamedText = true;
+        writer.write(value);
+      }
+
+      if (!streamedText && finalState) {
+        const last = finalState.messages.at(-1);
+        const replyText =
+          last && typeof last.content === "string" ? last.content : "";
+        if (replyText) {
+          const id = randomUUID();
+          writer.write({ type: "text-start", id });
+          writer.write({ type: "text-delta", id, delta: replyText });
+          writer.write({ type: "text-end", id });
+        }
+      }
     },
   });
 
