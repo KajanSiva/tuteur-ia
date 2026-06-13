@@ -239,6 +239,7 @@ parent.addConditionalEdges("classify", routeOnIntent, { ingestSG:"ingestSG", rev
 ```
 - **État parent sur `MessagesAnnotation`** (transcript partagé) + clés propres : `intent`, `activeLessonId`/`lastIngestedLessonId`, `socraticStep`, `pendingIngestion`. ⚠️ `messages` a besoin du **reducer d'append** (fourni par `MessagesAnnotation`) — sinon chaque nœud qui renvoie `{messages:[…]}` **écrase** l'historique. Les scalaires (`intent`…) prennent le reducer par défaut (remplace), ce qui est correct.
 - **Classifier différable** : avec un seul intent câblé tu n'as même pas besoin du classifier ; mais le MVP a 3 intents → on le construit. Confiance basse du classifier → router vers un petit nœud **`clarify`** (pose une question) plutôt que deviner. Flow-switch cheap = un mauvais branchement se rattrape au tour suivant.
+- **Saut de `classify` quand un flow est en cours (décision 13/06)** : une arête conditionnelle au START lit l'état (un flow `revise` actif ?) ; si oui, le tour **bypasse `classify`** et route directement vers le sous-graphe pour traiter la réponse de l'élève (cf. §5.3 : run-to-END). Sinon `classify`. Sans ce garde, le « 1789 » de l'enfant serait re-classifié comme un nouvel intent à chaque tour. *(C'est l'analogue, côté dialogue normal, du guard resume-vs-message du §6 — qui, lui, reste pour le HIL de l'étape 3.)*
 
 ### 5.2 Sous-graphe `ingest` — **optimiste, non-bloquant**
 ```
@@ -271,6 +272,14 @@ BOUCLE EXTERNE DÉTERMINISTE sur les concepts de la leçon :
 - **Borner la boucle interne** (max tours + sortie sur signal structuré) empêche le nœud agent de tourner à l'infini *et* alimente la distillation incrémentale (§4.6).
 - La qualité socratique (ton, ne pas donner la réponse, adaptativité) se **tune contre de vraies séances**, pas sur le papier. Assez bon pour démarrer ; itérer empiriquement.
 
+> **Réalisation concrète (décision 13/06, étape 2) — la « boucle » est une machine à états portée par le checkpoint, PAS un `while` intra-nœud.** Vérifié contre les bonnes pratiques de l'écosystème : le pattern canonique d'un chatbot multi-tours est **run-to-END + re-invoke par message** (arête vers `END` à chaque tour, même `thread_id`, le checkpointer recharge l'état) ; `interrupt()` est idiomatique pour le **HIL *au sein d'un run*** (gate d'approbation), pas pour la frontière naturelle entre deux tours. Donc `interrupt()` reste **réservé au gate dur (étape 3)** ; le dialogue normal ne s'en sert jamais.
+> - **Un POST = un tour de dialogue.** `socratic.ask` est le dernier nœud du tour : il **streame** une question/relance puis le graphe atteint `END`. Le tour suivant ré-entre par le router (cf. §5.1 : un flow `revise` actif **saute `classify`** et va directement traiter la réponse).
+> - **Deux nœuds LLM distincts, pas un** : `socratic` (prose ouverte, streamée) et `evaluate` (sortie **structurée** zod = *signal de maîtrise*, modèle cheap, **non streamé**). Sépare proprement l'altitude (agentique ouvert vs raisonnement cadré) et n'entrave pas le streaming.
+> - **Écriture mémoire GATED, pas systématique** : `evaluate` renvoie un statut `continue | resolved` ; `decide` (déterministe) tranche. `applyMasteryOps` + append `session_trace` ne se déclenchent **que** sur `resolved` (ou résolution forcée à `MAX_TURNS`, garde-fou anti-boucle). Un simple `continue` = **aucune écriture**. C'est l'enforcement de la distillation « par concept évalué » (§4.7) : on n'écrit que quand l'agent juge le concept *traité*, pas après chaque interaction.
+> - **Plusieurs allers-retours par concept** sont le mode normal (élève qui galère, réponse partielle à creuser) → la boucle interne n'est pas bornée à 1 tour ; `MAX_TURNS` n'est qu'un plafond de sûreté.
+> - **Le *signal de maîtrise* est un schéma NOUVEAU interne à `revise`** (`{ status, level?, rationale?, confidence? }`), **distinct de `MasteryOpSchema`** (§4) : on ne mappe vers une `MasteryOp` qu'à la résolution → churn minimal sur les contrats de surface de l'étape 1.
+> - **`session_trace`** : l'API mémoire de l'étape 1 ne couvre pas l'écriture du trace → un petit helper d'append (incrémental, §4.6) est ajouté dans `memory/`.
+
 ### 5.4 Sous-graphe `qa` — léger
 Q&A cadrée sur une leçon (notions importantes, niveau de maîtrise). Essentiellement un appel LLM sur leçon + mémoire (le "niveau de maîtrise" est même une simple lecture de `mastery`). Pas la boucle lourde du socratique.
 
@@ -296,7 +305,13 @@ Un seul `/api/chat`. **Plus de `/api/ingest`, `/api/ingest/validate`, `/api/stud
 
 - Handler **stateless**, chaque requête porte `thread_id`. Reçoit les messages, convertit via `toBaseMessages`, **reprend le graphe parent** par `thread_id`, streame (§7).
 - ⚠️ **Guard resume-vs-new-message** : en tête du handler, vérifier l'état d'interrupt (`graph.getState(config)` → `.tasks[].interrupts` / `.next`). Si le thread est **interrompu**, le POST suivant doit devenir un `graph.stream(new Command({ resume: … }), …)`, **pas** un nouveau `HumanMessage`. Sinon le "oui" de l'enfant est re-classifié comme un nouvel intent. Le front marque explicitement un envoi "resume" (cf. §8).
-- **Résolution de leçon** (pour "fais-moi réviser la leçon 13") : un resolver déterministe mappe une référence → `lesson.id` (par titre/numéro), alimente `activeLessonId` dans l'état.
+- **Résolution de leçon** (pour "fais-moi réviser la leçon 13") : un resolver déterministe mappe une référence → `lesson.id` (par titre/numéro), alimente `activeLessonId` dans l'état. **Étape 2 (décision 13/06) — JAMAIS de choix implicite** : `classify` capture un **indice de leçon optionnel** (n° de thème / titre) ; le resolver calcule un **ensemble de candidats** depuis la base (mapping sur `lesson.metadata.theme` / titre des fixtures), puis :
+  - **exactement 1 candidat** (l'indice matche une leçon, *ou* il n'existe qu'une seule leçon) → on résout et on enchaîne. Ce n'est pas un pari : c'est sans ambiguïté.
+  - **0 candidat** (réf. introuvable, ex. « la 13 » alors que seules 11 & 12 existent) → nœud **`clarify`** : *« je n'ai pas cette leçon ; voici ce que j'ai… »*.
+  - **>1 candidat** (aucun indice avec plusieurs leçons, ou indice vague) → **`clarify`** : *« tu veux réviser laquelle ? j'ai… »* (liste **lue dans la DB** : titre + thème ; message déterministe, le LLM ne devine pas).
+  - **base vide** (rien d'ingéré) → message qui oriente vers l'ajout de leçon (intent `ingest`, étape 3).
+  - ❌ **Pas de « leçon par défaut » silencieuse.** Le seul défaut légitime = le cas *1 candidat unique*.
+  - **Tour suivant après `clarify`** : un flag d'état `pendingLessonChoice` fait **sauter `classify`** et renvoie la réponse (« la 12 ») directement au resolver (même garde que §5.1), pour éviter qu'une réponse courte soit mal classifiée.
 
 ---
 
@@ -446,3 +461,11 @@ Le tout conteneurisé (docker compose : backend + Postgres), prêt-à-déployer 
 - **Transaction = par appel d'applier**, pas par op. Un appel = la conséquence mémoire d'UN évènement (une réponse de l'élève) → tout-ou-rien. L'indépendance §4.7 vient de la **granularité d'appel** (la boucle `revise` appellera une fois par concept résolu), **pas** d'un découpage en sous-transactions.
 - **Contrainte d'unicité `(cible, version)`** sur les tables history (durcissement concurrence : une collision de version fait échouer la transaction au lieu de produire un doublon silencieux).
 - **Profil = mémoire procédurale** : `is_locked` défaut TRUE, et **une ligne absente compte comme verrouillée** → **toute écriture, même la première, exige `force`**. ⚠️ **CONTRAT À DÉFINIR À L'ÉTAPE 2/3** : le verrou n'a de valeur que si le nœud `session_analysis` utilise `force` **sélectivement** (p. ex. conditionné à un seuil de confiance) ; sinon il est purement décoratif. Le verrou est aussi **dormant pour `mastery`** (défaut FALSE, aucune op ne le pose) — présent par symétrie.
+
+### Décisions actées 13/06 (étape 2 — cadrage du flow `revise`)
+- **Multi-tours = machine à états run-to-END** (graphe jusqu'à `END` à chaque tour, checkpointer + état parent portent la progression), **pas** une boucle `interrupt()` intra-nœud. Vérifié contre les bonnes pratiques LangGraph. `interrupt()` **reservé au HIL de l'étape 3**. Détail en §5.3 (callout) + §5.1 (saut de `classify`).
+- **Deux nœuds LLM dans `revise`** : `socratic` (prose streamée, ouverte) + `evaluate` (signal de maîtrise **structuré** zod, modèle cheap). Le *signal* est un **schéma interne à `revise`** (`{ status: continue|resolved, level?, rationale?, confidence? }`), distinct de `MasteryOpSchema` ; mappé vers une `MasteryOp` **seulement** à la résolution.
+- **Écriture mémoire gated sur résolution de concept** (jamais après chaque interaction) : `applyMasteryOps` + append `session_trace` uniquement sur `resolved` (ou `MAX_TURNS` forcé). C'est l'enforcement de la distillation §4.7. **Plusieurs allers-retours par concept = mode normal** ; `MAX_TURNS` = garde-fou.
+- **Résolution de leçon — jamais de choix implicite** : indice optionnel capturé par `classify` → resolver déterministe (par `metadata.theme`/titre) qui renvoie un **ensemble de candidats**. 1 candidat unique → on enchaîne ; 0 ou >1 → nœud **`clarify`** (liste les leçons depuis la DB et demande). **Pas de leçon par défaut silencieuse.** Flag `pendingLessonChoice` pour traiter la réponse au tour suivant sans re-`classify`. Détail en §6.
+- **`session_trace`** : append incrémental via un helper ajouté à `memory/` (non couvert par l'API étape 1).
+- **Découpage en sous-tranches (un commit validé chacune)** : 2.0 deps + factory modèle par-rôle · 2.1 router parent (classify → arêtes → sous-graphes stub) · 2.2 seam streaming bout-en-bout + front `useChat` · 2.3 `revise` 1er tour · 2.4 multi-tours + `evaluate` gated + `PostgresSaver` · 2.5 update mémoire incrémental + `session_trace` · 2.6 resolver leçon + finitions end-to-end.
