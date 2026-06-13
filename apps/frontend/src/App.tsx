@@ -1,43 +1,30 @@
+import type { FormEvent } from "react";
 import { useState } from "react";
+import { useChat } from "@ai-sdk/react";
+import { DefaultChatTransport } from "ai";
+import type { TutorUIMessage } from "@tuteur/shared";
 import { Send, Sparkles } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ChatEmptyState } from "@/components/EmptyState";
-import { MessageBubble, type MessageRole } from "@/components/MessageBubble";
+import { MessageBubble } from "@/components/MessageBubble";
 
-type Message = { role: MessageRole; content: string };
+const transport = new DefaultChatTransport<TutorUIMessage>({ api: "/api/chat" });
 
 export default function App() {
-  const [messages, setMessages] = useState<Message[]>([]);
+  const { messages, sendMessage, status } = useChat<TutorUIMessage>({
+    transport,
+  });
   const [input, setInput] = useState("");
-  const [loading, setLoading] = useState(false);
+  const busy = status === "submitted" || status === "streaming";
 
-  async function send() {
+  function submit(event: FormEvent) {
+    event.preventDefault();
     const text = input.trim();
-    if (!text || loading) return;
-
-    const next: Message[] = [...messages, { role: "user", content: text }];
-    setMessages(next);
+    if (!text || busy) return;
     setInput("");
-    setLoading(true);
-
-    try {
-      const res = await fetch("/api/chat", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ messages: next }),
-      });
-      const data = await res.json();
-      setMessages((m) => [...m, { role: "assistant", content: data.reply ?? "" }]);
-    } catch {
-      setMessages((m) => [
-        ...m,
-        { role: "assistant", content: "error: backend unreachable" },
-      ]);
-    } finally {
-      setLoading(false);
-    }
+    void sendMessage({ text });
   }
 
   return (
@@ -58,27 +45,31 @@ export default function App() {
 
       <div className="flex-1 space-y-3 overflow-y-auto py-2">
         {messages.length === 0 && <ChatEmptyState />}
-        {messages.map((m, i) => (
-          <MessageBubble key={i} role={m.role}>
-            {m.content}
-          </MessageBubble>
-        ))}
+        {messages.map((message) => {
+          const role = message.role === "user" ? "user" : "assistant";
+          return message.parts.map((part, index) => {
+            switch (part.type) {
+              case "text":
+                return (
+                  <MessageBubble key={`${message.id}-${index}`} role={role}>
+                    {part.text}
+                  </MessageBubble>
+                );
+              default:
+                return null;
+            }
+          });
+        })}
       </div>
 
-      <form
-        className="flex items-center gap-2 py-4"
-        onSubmit={(e) => {
-          e.preventDefault();
-          void send();
-        }}
-      >
+      <form className="flex items-center gap-2 py-4" onSubmit={submit}>
         <Input
           value={input}
-          onChange={(e) => setInput(e.target.value)}
+          onChange={(event) => setInput(event.target.value)}
           placeholder="Écris un message…"
-          disabled={loading}
+          disabled={busy}
         />
-        <Button type="submit" size="icon" disabled={loading} aria-label="Envoyer">
+        <Button type="submit" size="icon" disabled={busy} aria-label="Envoyer">
           <Send />
         </Button>
       </form>

@@ -14,6 +14,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.test.json"
   },
   "dependencies": {
+    "@ai-sdk/langchain": "^2.0.211",
     "@fastify/cors": "^10.0.1",
     "@langchain/anthropic": "^1.4.1",
     "@langchain/core": "^1.1.49",
@@ -21,6 +22,7 @@
     "@prisma/adapter-pg": "^7.8.0",
     "@prisma/client": "^7.8.0",
     "@tuteur/shared": "workspace:*",
+    "ai": "^6.0.204",
     "fastify": "^5.2.0",
     "pg": "^8.21.0",
     "zod": "^4.4.3"
