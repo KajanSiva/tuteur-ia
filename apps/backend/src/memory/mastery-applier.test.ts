@@ -103,7 +103,7 @@ describe("applyMasteryOps", () => {
     expect(row.recordedAt).toBeInstanceOf(Date);
   });
 
-  it("commits each op independently — a later failure keeps earlier ops", async () => {
+  it("applies a call atomically — a mid-batch failure rolls back the whole call", async () => {
     const GHOST = "11111111-1111-4111-8111-0000000009ff"; // no matching concept row
 
     await expect(
@@ -113,7 +113,9 @@ describe("applyMasteryOps", () => {
       ]),
     ).rejects.toThrow();
 
-    expect((await masteryRow(WATERLOO))?.level).toBe("emerging");
+    // one call = one unit of work: the earlier op is rolled back too
+    expect(await masteryRow(WATERLOO)).toBeNull();
+    expect(await history(WATERLOO)).toHaveLength(0);
   });
 
   it("removes the current row and records a delete in history", async () => {
