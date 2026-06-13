@@ -379,8 +379,8 @@ Méthode : **d'abord produire du structuré** (feuille Q/R + signaux de maîtris
 
 ## 12. Séquence de build (l'ordre à suivre)
 
-0. **Scaffold** monorepo (pnpm + Turbo, `docker-compose` avec Postgres, package `shared`, schéma DB + migrations, factory modèle par-rôle, graphe parent + sous-graphes vides, Fastify `/api/chat` qui répond). Vérifier l'API AI SDK v6 (§2).
-1. **Schéma mémoire DB** (tables état + history, concept/mastery/student_profile/session_trace) + **applier d'opérations déterministe** (ADD/UPDATE/DELETE/NOOP) + repos de lecture/hydratation. **Seed des fixtures à la main** (1-2 leçons + concepts) pour débloquer le cœur sans dépendre de l'ingestion.
+0. ✅ **[FAIT]** **Scaffold** monorepo (pnpm + Turbo, `docker-compose` avec Postgres, package `shared`, Fastify `/api/chat` stub). ⚠️ Restent à faire au moment du build cœur : factory modèle par-rôle, graphe parent + sous-graphes, vérif API AI SDK v6 (§2) — pas encore câblés (le `/api/chat` actuel ne fait que logger + renvoyer un stub).
+1. ✅ **[FAIT]** **Schéma mémoire DB** (tables état + history, concept/mastery/student_profile/session_trace) + **appliers déterministes** + repos de lecture/hydratation + fixtures seedées. **API disponible dans `apps/backend/src/memory/`** : `hydrateForRevision(studentId, lessonId)` (bundle socratique §4.8), `applyMasteryOps(meta, ops[])` (forme collection), `applyProfileOp(meta, op)` (forme état) ; contrats zod `MasteryOpSchema`/`ProfileOpSchema` (`memory/ops.ts`) ; `meta = { studentId, changedBy, runId? }`. 43 tests verts.
 2. **Tranche verticale `revise`** (le cœur / le skill nommable) : router → sous-graphe revise (boucle externe concepts + dialogue socratique borné + signal de maîtrise) + **update mémoire incrémental déterministe** + streaming tokens, bout-en-bout depuis le client React. Sur fixtures seedées.
 3. **Ingestion conversationnelle** (optimiste, draft + récap) + **HIL gate dur** (interrupt → data-confirm + guard resume) + intent `qa`. (L'ingestion n'est plus le "warm-up trivial" — elle a le HIL ; c'est pour ça qu'elle vient après le cœur.)
 4. **Approfondir le moat** : eval (B) + observabilité/coût (C) + **visibilité/rollback mémoire** (timeline d'history + restauration par replay via l'applier — la donnée versionnée est déjà là dès l'étape 1). Profondeur, pas largeur.
@@ -435,3 +435,9 @@ Le tout conteneurisé (docker compose : backend + Postgres), prêt-à-déployer 
 - **Rollback + visibilité différés à l'étape 4** (la donnée versionnée est déjà produite par l'applier dès l'étape 1) — §4.6.
 - **Tests** : intégration sur base dédiée **`tuteur_test`** auto-provisionnée ; **vitest** en deux *projects* (`unit` sans DB / `integration` avec). Stratégie de test détaillée dans **CLAUDE.md**.
 - **Front (hors design mémoire)** : Tailwind v4 + shadcn/ui, thème custom "Atelier" (tokens CSS). Le front reste un client mince jetable jusqu'au câblage `useChat`/streaming (étape 2).
+
+### Décisions actées 13/06 (appliers — étape 1 finalisée)
+- **Étape 1 terminée** (cf. §12.1 pour l'API du module `memory/`).
+- **Transaction = par appel d'applier**, pas par op. Un appel = la conséquence mémoire d'UN évènement (une réponse de l'élève) → tout-ou-rien. L'indépendance §4.7 vient de la **granularité d'appel** (la boucle `revise` appellera une fois par concept résolu), **pas** d'un découpage en sous-transactions.
+- **Contrainte d'unicité `(cible, version)`** sur les tables history (durcissement concurrence : une collision de version fait échouer la transaction au lieu de produire un doublon silencieux).
+- **Profil = mémoire procédurale** : `is_locked` défaut TRUE, et **une ligne absente compte comme verrouillée** → **toute écriture, même la première, exige `force`**. ⚠️ **CONTRAT À DÉFINIR À L'ÉTAPE 2/3** : le verrou n'a de valeur que si le nœud `session_analysis` utilise `force` **sélectivement** (p. ex. conditionné à un seuil de confiance) ; sinon il est purement décoratif. Le verrou est aussi **dormant pour `mastery`** (défaut FALSE, aucune op ne le pose) — présent par symétrie.
