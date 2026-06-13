@@ -35,9 +35,10 @@ Classe le DERNIER message de l'élève dans exactement une intention :
 Donne aussi une confidence entre 0 et 1.`;
 
 async function classify(state: typeof RouterState.State) {
-  const model = getModel("classifier").withStructuredOutput(IntentSchema, {
-    name: "classify_intent",
-  });
+  const model = (await getModel("classifier")).withStructuredOutput(
+    IntentSchema,
+    { name: "classify_intent" },
+  );
   const result = await model.invoke([
     new SystemMessage(CLASSIFY_SYSTEM),
     ...state.messages,

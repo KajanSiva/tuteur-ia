@@ -1,4 +1,4 @@
-import { ChatAnthropic } from "@langchain/anthropic";
+import { BaseChatModel } from "@langchain/core/language_models/chat_models";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { getModel, resolveModelConfig } from "./models.js";
@@ -35,6 +35,16 @@ describe("resolveModelConfig", () => {
     expect(resolveModelConfig("socratic", env).temperature).toBe(0.2);
   });
 
+  it("lets env override the provider per role (multi-provider seam)", () => {
+    const env = {
+      LLM_PROVIDER_JUDGE: "openai",
+      LLM_MODEL_JUDGE: "gpt-5",
+    } as NodeJS.ProcessEnv;
+    const config = resolveModelConfig("judge", env);
+    expect(config.provider).toBe("openai");
+    expect(config.model).toBe("gpt-5");
+  });
+
   it("rejects a non-numeric temperature override", () => {
     const env = { LLM_TEMPERATURE_JUDGE: "hot" } as NodeJS.ProcessEnv;
     expect(() => resolveModelConfig("judge", env)).toThrow(
@@ -50,12 +60,11 @@ describe("getModel", () => {
     else process.env.ANTHROPIC_API_KEY = prevKey;
   });
 
-  it("builds an Anthropic client carrying the resolved model", () => {
+  it("instantiates a usable chat model for a role", async () => {
     process.env.ANTHROPIC_API_KEY = "sk-ant-test";
-    const model = getModel("socratic");
-    expect(model).toBeInstanceOf(ChatAnthropic);
-    expect((model as unknown as { model: string }).model).toBe(
-      "claude-sonnet-4-6",
-    );
+    const model = await getModel("socratic");
+    expect(model).toBeInstanceOf(BaseChatModel);
+    expect(typeof model.withStructuredOutput).toBe("function");
+    expect(typeof model.stream).toBe("function");
   });
 });

@@ -1,5 +1,5 @@
-import { ChatAnthropic } from "@langchain/anthropic";
 import type { BaseChatModel } from "@langchain/core/language_models/chat_models";
+import { initChatModel } from "langchain/chat_models/universal";
 
 // A node never hardcodes a provider/model. It asks for a role; the factory maps
 // the role to a concrete model. This is what lets the socratic node run on a
@@ -13,8 +13,17 @@ export type Role =
   | "session_analysis"
   | "judge";
 
+// Providers initChatModel can target. Each needs its @langchain/<provider>
+// package installed; only anthropic is installed today.
+export type ModelProvider =
+  | "anthropic"
+  | "openai"
+  | "google-genai"
+  | "groq"
+  | "mistralai";
+
 export type ModelConfig = {
-  provider: "anthropic";
+  provider: ModelProvider;
   model: string;
   temperature: number;
 };
@@ -33,8 +42,9 @@ const DEFAULTS: Record<Role, ModelConfig> = {
 };
 
 // Resolves a role to its config, applying per-role env overrides:
-// LLM_MODEL_<ROLE> and LLM_TEMPERATURE_<ROLE> (role uppercased). Pure — the env
-// is injectable so the policy is testable without a live process environment.
+// LLM_PROVIDER_<ROLE>, LLM_MODEL_<ROLE>, LLM_TEMPERATURE_<ROLE> (role uppercased).
+// Pure — the env is injectable so the policy is testable without a live process
+// environment.
 export function resolveModelConfig(
   role: Role,
   env: NodeJS.ProcessEnv = process.env,
@@ -42,6 +52,7 @@ export function resolveModelConfig(
   const base = DEFAULTS[role];
   const key = role.toUpperCase();
 
+  const provider = (env[`LLM_PROVIDER_${key}`] || base.provider) as ModelProvider;
   const model = env[`LLM_MODEL_${key}`] || base.model;
 
   const tempRaw = env[`LLM_TEMPERATURE_${key}`];
@@ -51,15 +62,13 @@ export function resolveModelConfig(
     throw new Error(`Invalid LLM_TEMPERATURE_${key}: ${tempRaw}`);
   }
 
-  return { provider: base.provider, model, temperature };
+  return { provider, model, temperature };
 }
 
-// Provider-agnostic seam: only Anthropic is wired today. Another provider
-// (OpenAI, etc.) would resolve to a different config.provider and branch here.
-export function getModel(role: Role): BaseChatModel {
-  const config = resolveModelConfig(role);
-  return new ChatAnthropic({
-    model: config.model,
-    temperature: config.temperature,
-  });
+// Provider-agnostic instantiation: initChatModel dynamically loads the resolved
+// provider's package and returns a BaseChatModel. Swapping a role's provider is
+// a config change (provider + model strings) — no code change in the nodes.
+export async function getModel(role: Role): Promise<BaseChatModel> {
+  const { provider, model, temperature } = resolveModelConfig(role);
+  return initChatModel(model, { modelProvider: provider, temperature });
 }
