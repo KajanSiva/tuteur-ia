@@ -84,6 +84,16 @@ describe("decideMasteryAction", () => {
       expect((action as { values: { rationale: string | null } }).values.rationale).toBeNull();
     });
 
+    it("keeps confidence when omitted and replaces it when provided", () => {
+      const current = state({ confidence: 0.8 });
+
+      const kept = decideMasteryAction(current, op({ op: "update", level: "secure" }));
+      expect((kept as { values: { confidence: number | null } }).values.confidence).toBe(0.8);
+
+      const set = decideMasteryAction(current, op({ op: "update", confidence: 0.3 }));
+      expect((set as { values: { confidence: number | null } }).values.confidence).toBe(0.3);
+    });
+
     it("is a noop when the merge changes nothing", () => {
       const current = state({ level: "secure", rationale: "ok" });
       const action = decideMasteryAction(

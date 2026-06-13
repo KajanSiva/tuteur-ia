@@ -41,7 +41,6 @@ describe("applyMasteryOps", () => {
 
     const row = await masteryRow(WATERLOO);
     expect(row?.level).toBe("secure");
-    expect(row?.rationale).toBe("début"); // kept through the silent update
     expect(row?.version).toBe(2);
 
     const log = await history(WATERLOO);
@@ -66,7 +65,55 @@ describe("applyMasteryOps", () => {
     ]);
 
     const row = await masteryRow(WATERLOO);
+    expect(row?.level).toBe("secure");
     expect(row?.rationale).toBe("comprend les causes, confond les dates");
+
+    // the preserved nuance is carried into the v2 snapshot, not just the live row
+    const log = await history(WATERLOO);
+    expect(log[1]).toMatchObject({
+      version: 2,
+      level: "secure",
+      rationale: "comprend les causes, confond les dates",
+    });
+  });
+
+  it("records provenance on each history row", async () => {
+    await applyMasteryOps(
+      { studentId: STUDENT, changedBy: "session_analysis", runId: "run-42" },
+      [
+        {
+          op: "add",
+          conceptId: WATERLOO,
+          level: "developing",
+          confidence: 0.7,
+          reason: "hésitation observée sur les dates",
+        },
+      ],
+    );
+
+    const [row] = await history(WATERLOO);
+    expect(row).toMatchObject({
+      op: "add",
+      reason: "hésitation observée sur les dates",
+      changedBy: "session_analysis",
+      runId: "run-42",
+      confidence: 0.7,
+      level: "developing",
+    });
+    expect(row.recordedAt).toBeInstanceOf(Date);
+  });
+
+  it("commits each op independently — a later failure keeps earlier ops", async () => {
+    const GHOST = "11111111-1111-4111-8111-0000000009ff"; // no matching concept row
+
+    await expect(
+      applyMasteryOps(META, [
+        { op: "add", conceptId: WATERLOO, level: "emerging", reason: "valid" },
+        { op: "add", conceptId: GHOST, level: "secure", reason: "fk violation" },
+      ]),
+    ).rejects.toThrow();
+
+    expect((await masteryRow(WATERLOO))?.level).toBe("emerging");
   });
 
   it("removes the current row and records a delete in history", async () => {
