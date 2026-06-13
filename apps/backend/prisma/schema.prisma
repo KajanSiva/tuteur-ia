@@ -115,7 +115,7 @@ model MasteryHistory {
   reason     String?
   recordedAt DateTime     @default(now()) @map("recorded_at")
 
-  @@index([studentId, conceptId, version])
+  @@unique([studentId, conceptId, version])
   @@map("mastery_history")
 }
 
@@ -152,7 +152,7 @@ model StudentProfileHistory {
   reason           String?
   recordedAt       DateTime @default(now()) @map("recorded_at")
 
-  @@index([studentId, version])
+  @@unique([studentId, version])
   @@map("student_profile_history")
 }
 

@@ -39,6 +39,27 @@ describe("applyProfileOp", () => {
     expect(await history()).toHaveLength(0);
   });
 
+  it("does not change an existing profile on a non-forced update", async () => {
+    await applyProfileOp(META, {
+      op: "update",
+      learningStyle: "questions courtes",
+      reason: "session 1",
+      force: true,
+    });
+
+    const blocked = await applyProfileOp(META, {
+      op: "update",
+      learningStyle: "longues lectures",
+      reason: "routine, low confidence",
+    });
+
+    expect(blocked).toMatchObject({ applied: "noop", reason: "locked" });
+    const row = await profileRow();
+    expect(row?.learningStyle).toBe("questions courtes");
+    expect(row?.version).toBe(1);
+    expect(await history()).toHaveLength(1); // only the initial create
+  });
+
   it("creates the profile (locked) on a forced first write", async () => {
     await applyProfileOp(META, {
       op: "update",
