@@ -16,8 +16,14 @@ import { IntentSchema, routeOnIntent } from "./intent.js";
 // default last-value reducer.
 export const RouterState = Annotation.Root({
   ...MessagesAnnotation.spec,
-  intent: Annotation<Intent | null>(),
-  confidence: Annotation<number | null>(),
+  intent: Annotation<Intent | null>({
+    reducer: (_, next) => next,
+    default: () => null,
+  }),
+  confidence: Annotation<number | null>({
+    reducer: (_, next) => next,
+    default: () => null,
+  }),
 });
 
 const CLASSIFY_SYSTEM = `Tu es le routeur d'intention d'un tuteur scolaire (CM2, Histoire).

@@ -114,6 +114,6 @@ describe("applyProfileOp", () => {
       runId: "run-7",
       learningStyle: "exemples concrets",
     });
-    expect(row.recordedAt).toBeInstanceOf(Date);
+    expect(row?.recordedAt).toBeInstanceOf(Date);
   });
 });

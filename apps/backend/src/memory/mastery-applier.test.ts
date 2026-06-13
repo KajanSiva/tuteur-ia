@@ -100,7 +100,7 @@ describe("applyMasteryOps", () => {
       confidence: 0.7,
       level: "developing",
     });
-    expect(row.recordedAt).toBeInstanceOf(Date);
+    expect(row?.recordedAt).toBeInstanceOf(Date);
   });
 
   it("applies a call atomically — a mid-batch failure rolls back the whole call", async () => {
