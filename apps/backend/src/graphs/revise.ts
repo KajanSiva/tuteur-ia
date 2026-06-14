@@ -3,6 +3,7 @@ import {
   type BaseMessage,
   SystemMessage,
 } from "@langchain/core/messages";
+import type { LangGraphRunnableConfig } from "@langchain/langgraph";
 import { z } from "zod";
 
 import { prisma } from "../db/client.js";
@@ -13,6 +14,13 @@ import {
   type HydratedConcept,
   type HydrationBundle,
 } from "../memory/hydration.js";
+import { applyMasteryOps } from "../memory/mastery-applier.js";
+import type { MasteryOp } from "../memory/ops.js";
+import {
+  appendSessionTraceEntry,
+  endSessionTrace,
+  startSessionTrace,
+} from "../memory/session-trace.js";
 
 // How many concepts a single revision session covers (the rest carries over to a
 // later session — the compounding). A flat cap for now; per-subject/configurable
@@ -48,7 +56,31 @@ export type ReviseState = {
   turnsOnConcept: number;
   reviseActive: boolean;
   masterySignal: MasterySignal | null;
+  sessionTraceId: string | null;
 };
+
+// Provenance tag stamped on every mastery row this flow writes.
+export const REVISE_CHANGED_BY = "revise";
+
+// Maps the evaluate node's mastery signal to a MasteryOp at resolution. Absent
+// fields are OMITTED (not nulled) so the applier's per-field merge keeps earlier
+// nuance (brief §4.5). The op is a plain "update" — the applier derives
+// insert-vs-update from whether a current row exists, so it is correct whether
+// this is the first assessment or a later one.
+export function masterySignalToOp(
+  signal: MasterySignal,
+  conceptId: string,
+): MasteryOp {
+  const forced = signal.status !== "resolved";
+  return {
+    op: "update",
+    conceptId,
+    reason: `Révision socratique (${forced ? "forcé" : "résolu"})`,
+    ...(signal.level !== undefined ? { level: signal.level } : {}),
+    ...(signal.rationale != null ? { rationale: signal.rationale } : {}),
+    ...(signal.confidence != null ? { confidence: signal.confidence } : {}),
+  };
+}
 
 // Deterministic, gaps-first concept selection: unknown concepts (never assessed)
 // first, then weak ones (emerging/developing); already-secure concepts are left
@@ -171,6 +203,7 @@ export async function hydrateNode(): Promise<Partial<ReviseState>> {
   const { studentId, lessonId } = await resolveStudentAndLesson();
   const bundle = await hydrateForRevision(studentId, lessonId);
   const selected = selectConcepts(bundle.concepts);
+  const sessionTraceId = await startSessionTrace(studentId, lessonId);
   return {
     studentId,
     lessonId,
@@ -179,6 +212,7 @@ export async function hydrateNode(): Promise<Partial<ReviseState>> {
     turnsOnConcept: 0,
     reviseActive: true,
     masterySignal: null,
+    sessionTraceId,
   };
 }
 
@@ -268,12 +302,38 @@ export function decideAfterEvaluate(
   return "socratic";
 }
 
-// Moves the cursor to the next concept and resets the per-concept counters.
-// Incremental memory write (applyMasteryOps + session_trace) lands here in a
-// later slice; for now resolution only advances the loop.
+// Concept resolution: the only place memory is written. It maps the mastery
+// signal to a MasteryOp (applied in a transaction with its history row) and
+// appends one session_trace entry, then moves the cursor on. A plain "continue"
+// never reaches here — this node runs only when decide resolves the concept (on
+// a positive signal or the forced turn cap), enforcing distillation per concept
+// assessed (brief §4.7).
 export async function advanceNode(
   state: ReviseState,
+  config: LangGraphRunnableConfig,
 ): Promise<Partial<ReviseState>> {
+  const { concept } = await loadCurrentConcept(state);
+  if (concept && state.masterySignal && state.studentId) {
+    const runId =
+      typeof config.configurable?.thread_id === "string"
+        ? config.configurable.thread_id
+        : null;
+    await applyMasteryOps(
+      { studentId: state.studentId, changedBy: REVISE_CHANGED_BY, runId },
+      [masterySignalToOp(state.masterySignal, concept.id)],
+    );
+    if (state.sessionTraceId) {
+      await appendSessionTraceEntry(state.sessionTraceId, {
+        conceptId: concept.id,
+        conceptLabel: concept.label,
+        status: state.masterySignal.status === "resolved" ? "resolved" : "forced",
+        level: state.masterySignal.level ?? null,
+        rationale: state.masterySignal.rationale ?? null,
+        confidence: state.masterySignal.confidence ?? null,
+        turns: state.turnsOnConcept,
+      });
+    }
+  }
   return {
     conceptCursor: state.conceptCursor + 1,
     turnsOnConcept: 0,
@@ -294,6 +354,9 @@ export async function finishNode(
   state: ReviseState,
 ): Promise<Partial<ReviseState>> {
   const { bundle } = await loadCurrentConcept(state);
+  if (state.sessionTraceId) {
+    await endSessionTrace(state.sessionTraceId);
+  }
   return {
     messages: [
       new AIMessage(
@@ -305,5 +368,6 @@ export async function finishNode(
     conceptCursor: 0,
     turnsOnConcept: 0,
     masterySignal: null,
+    sessionTraceId: null,
   };
 }

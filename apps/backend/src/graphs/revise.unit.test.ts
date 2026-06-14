@@ -10,6 +10,7 @@ import {
   buildSocraticSystem,
   decideAfterAdvance,
   decideAfterEvaluate,
+  masterySignalToOp,
   MAX_TURNS,
   type ReviseState,
   routeStart,
@@ -26,6 +27,7 @@ function reviseState(over: Partial<ReviseState> = {}): ReviseState {
     turnsOnConcept: 0,
     reviseActive: true,
     masterySignal: null,
+    sessionTraceId: "trace-1",
     ...over,
   };
 }
@@ -165,6 +167,46 @@ describe("decideAfterEvaluate", () => {
     expect(decideAfterEvaluate(reviseState({ masterySignal: null }))).toBe(
       "socratic",
     );
+  });
+});
+
+describe("masterySignalToOp", () => {
+  it("carries level, rationale and confidence through on a resolved signal", () => {
+    const op = masterySignalToOp(
+      { status: "resolved", level: "secure", rationale: "a retrouvé la date", confidence: 0.9 },
+      "c1",
+    );
+    expect(op).toMatchObject({
+      op: "update",
+      conceptId: "c1",
+      level: "secure",
+      rationale: "a retrouvé la date",
+      confidence: 0.9,
+    });
+    expect(op.reason).toContain("résolu");
+  });
+
+  it("marks a forced resolution (continue at the cap) in the reason", () => {
+    const op = masterySignalToOp({ status: "continue", level: "emerging" }, "c1");
+    expect(op.reason).toContain("forcé");
+    expect(op.level).toBe("emerging");
+  });
+
+  it("omits absent fields so the applier's per-field merge keeps earlier nuance", () => {
+    const op = masterySignalToOp({ status: "resolved" }, "c1");
+    expect(op).not.toHaveProperty("level");
+    expect(op).not.toHaveProperty("rationale");
+    expect(op).not.toHaveProperty("confidence");
+  });
+
+  it("treats a null rationale/confidence as absent (no overwrite)", () => {
+    const op = masterySignalToOp(
+      { status: "resolved", level: "secure", rationale: null, confidence: null },
+      "c1",
+    );
+    expect(op).not.toHaveProperty("rationale");
+    expect(op).not.toHaveProperty("confidence");
+    expect(op.level).toBe("secure");
   });
 });
 

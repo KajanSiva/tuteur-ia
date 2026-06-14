@@ -66,6 +66,10 @@ export const RouterState = Annotation.Root({
     reducer: (_, next) => next,
     default: () => null,
   }),
+  sessionTraceId: Annotation<string | null>({
+    reducer: (_, next) => next,
+    default: () => null,
+  }),
 });
 
 const CLASSIFY_SYSTEM = `Tu es le routeur d'intention d'un tuteur scolaire (CM2, Histoire).
