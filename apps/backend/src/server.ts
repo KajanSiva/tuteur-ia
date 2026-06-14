@@ -16,6 +16,7 @@ import { z } from "zod";
 
 import { createCheckpointer } from "./checkpoint/index.js";
 import { buildRouterGraph, type RouterState } from "./graphs/router.graph.js";
+import { withoutInternalNodes } from "./graphs/ui-stream.js";
 
 const app = Fastify({ logger: true });
 
@@ -67,8 +68,14 @@ app.post("/api/chat", async (request, reply) => {
       // The socratic node streams its tokens (surfaced here as text parts);
       // deterministic nodes emit a static message the adapter does not surface,
       // so we fall back to writing their final text once the stream is drained.
+      // Strip internal nodes (classify, evaluate) from the stream so their
+      // tool_use never surfaces as UI parts. An async generator satisfies
+      // toUIMessageStream's AsyncIterable input; cast to its parameter type.
+      const filtered = withoutInternalNodes(graphStream) as Parameters<
+        typeof toUIMessageStream<typeof RouterState.State>
+      >[0];
       let finalState: typeof RouterState.State | undefined;
-      const ui = toUIMessageStream<typeof RouterState.State>(graphStream, {
+      const ui = toUIMessageStream<typeof RouterState.State>(filtered, {
         onFinish: (state) => {
           finalState = state ?? undefined;
         },
