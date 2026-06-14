@@ -9,6 +9,7 @@ describe("buildRouterGraph", () => {
     const ids = Object.values(nodes).map((n) => n.id);
     for (const node of [
       "classify",
+      "resolveLesson",
       "revise",
       "socratic",
       "evaluate",

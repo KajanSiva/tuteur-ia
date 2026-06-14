@@ -11,6 +11,7 @@ import type { Intent } from "@tuteur/shared";
 
 import { getModel } from "../llm/models.js";
 import { IntentSchema, routeOnIntent } from "./intent.js";
+import { afterResolveLesson, resolveLessonNode } from "./lesson-resolver.js";
 import {
   advanceNode,
   afterHydrate,
@@ -70,6 +71,14 @@ export const RouterState = Annotation.Root({
     reducer: (_, next) => next,
     default: () => null,
   }),
+  lessonHint: Annotation<string | null>({
+    reducer: (_, next) => next,
+    default: () => null,
+  }),
+  pendingLessonChoice: Annotation<boolean>({
+    reducer: (_, next) => next,
+    default: () => false,
+  }),
 });
 
 const CLASSIFY_SYSTEM = `Tu es le routeur d'intention d'un tuteur scolaire (CM2, Histoire).
@@ -78,7 +87,8 @@ Classe le DERNIER message de l'élève dans exactement une intention :
 - "ingest" : elle veut ajouter ou transmettre une nouvelle leçon.
 - "qa" : elle pose une question ponctuelle sur une leçon.
 - "out_of_scope" : message hors du cadre scolaire des leçons.
-Donne aussi une confidence entre 0 et 1.`;
+Donne aussi une confidence entre 0 et 1.
+Si l'élève désigne une leçon (numéro de thème, titre, ou sujet comme « Napoléon » ou « l'école »), reporte-la dans lessonHint ; sinon mets lessonHint à null.`;
 
 // We bind the schema as a forced tool and read the parsed tool-call args, rather
 // than withStructuredOutput. Two failure modes are avoided at once under the
@@ -109,9 +119,13 @@ async function classify(state: typeof RouterState.State) {
   // A malformed or missing classification routes to clarify (ask), never a guess.
   const parsed = IntentSchema.safeParse(response.tool_calls?.[0]?.args);
   if (!parsed.success) {
-    return { intent: null, confidence: 0 };
+    return { intent: null, confidence: 0, lessonHint: null };
   }
-  return { intent: parsed.data.intent, confidence: parsed.data.confidence };
+  return {
+    intent: parsed.data.intent,
+    confidence: parsed.data.confidence,
+    lessonHint: parsed.data.lessonHint,
+  };
 }
 
 function flowPlaceholder(flow: string) {
@@ -145,11 +159,14 @@ async function clarify() {
 // Otherwise classify (the only router LLM call) routes by intent. The revise
 // loop is run-to-END + re-invoke per message: one POST = one dialogue turn.
 //   START ─ active? ─ yes → evaluate ─ decide ─ advance ─ decide ─ socratic/finish
-//          └ no → classify → { revise(hydrate) → socratic/finish | qa | ingest | … }
-// qa/ingest are placeholders; out_of_scope and clarify are their final behaviour.
+//          ├ pendingLessonChoice → resolveLesson (the student's lesson answer)
+//          └ no → classify → { revise → resolveLesson | qa | ingest | … }
+// resolveLesson maps the lesson hint to a lesson (→ revise/hydrate) or asks which
+// one. qa/ingest are placeholders; out_of_scope and clarify are final behaviour.
 export function buildRouterGraph(checkpointer?: BaseCheckpointSaver) {
   return new StateGraph(RouterState)
     .addNode("classify", classify)
+    .addNode("resolveLesson", resolveLessonNode)
     .addNode("revise", hydrateNode)
     .addNode("socratic", socraticNode)
     .addNode("evaluate", evaluateNode)
@@ -162,13 +179,18 @@ export function buildRouterGraph(checkpointer?: BaseCheckpointSaver) {
     .addConditionalEdges(START, routeStart, {
       classify: "classify",
       evaluate: "evaluate",
+      resolveLesson: "resolveLesson",
     })
     .addConditionalEdges("classify", routeOnIntent, {
-      revise: "revise",
+      revise: "resolveLesson",
       qa: "qa",
       ingest: "ingest",
       out_of_scope: "out_of_scope",
       clarify: "clarify",
+    })
+    .addConditionalEdges("resolveLesson", afterResolveLesson, {
+      revise: "revise",
+      [END]: END,
     })
     .addConditionalEdges("revise", afterHydrate, {
       socratic: "socratic",

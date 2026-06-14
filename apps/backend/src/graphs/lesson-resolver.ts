@@ -1,3 +1,8 @@
+import { AIMessage, type BaseMessage } from "@langchain/core/messages";
+import { END } from "@langchain/langgraph";
+
+import { getLessonsForResolution } from "../memory/repositories.js";
+
 // Deterministic lesson resolution: a free-text reference (a theme number, a
 // title fragment, or a subject the child names) → a concrete lesson, or a
 // clarification when it is absent or ambiguous. The LLM only extracts the
@@ -109,4 +114,85 @@ export function buildLessonClarification(
     return `Je n'ai pas trouvé cette leçon. Voici celles que je connais :\n${list}\nLaquelle veux-tu réviser ?`;
   }
   return `Tu veux réviser quelle leçon ? Voici celles que je connais :\n${list}`;
+}
+
+// --- Imperative shell: the resolver node and its routing ----------------------
+
+type LessonRow = Awaited<ReturnType<typeof getLessonsForResolution>>[number];
+
+function themeOf(metadata: unknown): number | null {
+  if (metadata && typeof metadata === "object" && "theme" in metadata) {
+    const value = (metadata as { theme: unknown }).theme;
+    return typeof value === "number" ? value : null;
+  }
+  return null;
+}
+
+function toLessonRefs(rows: LessonRow[]): LessonRef[] {
+  return rows.map((row) => ({
+    id: row.id,
+    title: row.title,
+    theme: themeOf(row.metadata),
+    conceptLabels: row.concepts.map((concept) => concept.label),
+  }));
+}
+
+function lastUserText(messages: BaseMessage[]): string | null {
+  for (let i = messages.length - 1; i >= 0; i -= 1) {
+    const message = messages[i];
+    if (message && message.getType() === "human") {
+      return typeof message.content === "string" ? message.content : null;
+    }
+  }
+  return null;
+}
+
+export type LessonResolveState = {
+  messages: BaseMessage[];
+  lessonHint: string | null;
+  lessonId: string | null;
+  pendingLessonChoice: boolean;
+};
+
+// On a pending-choice turn the router bypassed classify, so the raw answer
+// ("la 12") is the reference; otherwise use the hint classify extracted.
+function lessonReferenceFor(state: LessonResolveState): string | null {
+  return state.pendingLessonChoice
+    ? lastUserText(state.messages)
+    : state.lessonHint;
+}
+
+// Deterministic resolver node: resolve the lesson into state, or emit a
+// clarification / ingest-orientation message and arm pendingLessonChoice so the
+// next turn re-enters here with the student's answer (brief §6). lessonId is
+// cleared on every non-resolved outcome so a stale value can't leak through.
+export async function resolveLessonNode(state: LessonResolveState) {
+  const reference = lessonReferenceFor(state);
+  const lessons = toLessonRefs(await getLessonsForResolution());
+  const resolution = resolveLesson(reference, lessons);
+
+  switch (resolution.kind) {
+    case "resolved":
+      return { lessonId: resolution.lessonId, pendingLessonChoice: false };
+    case "empty":
+      return {
+        lessonId: null,
+        messages: [new AIMessage(EMPTY_BASE_MESSAGE)],
+        pendingLessonChoice: false,
+      };
+    default:
+      return {
+        lessonId: null,
+        messages: [new AIMessage(buildLessonClarification(resolution))],
+        pendingLessonChoice: true,
+      };
+  }
+}
+
+// A resolved lesson proceeds to the revise flow; every other outcome has already
+// emitted its message and ends the turn.
+export function afterResolveLesson(state: {
+  lessonId: string | null;
+}): "revise" | typeof END {
+  return state.lessonId ? "revise" : END;
 }

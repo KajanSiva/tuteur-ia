@@ -167,14 +167,10 @@ export function buildEvaluateSystem(
   return lines.filter((line) => line !== null).join("\n");
 }
 
-// Scaffolding until the lesson resolver (later slice): the single POC student
-// and the lesson revised by default.
-async function resolveStudentAndLesson() {
-  const [student, lesson] = await Promise.all([
-    prisma.student.findFirstOrThrow({ orderBy: { createdAt: "asc" } }),
-    prisma.lesson.findFirstOrThrow({ orderBy: { createdAt: "asc" } }),
-  ]);
-  return { studentId: student.id, lessonId: lesson.id };
+// The single POC student. Multi-student is out of scope (brief §0: "une élève");
+// the lesson, in contrast, is chosen by the deterministic resolver.
+async function resolveStudent() {
+  return prisma.student.findFirstOrThrow({ orderBy: { createdAt: "asc" } });
 }
 
 // Re-hydrates the session and resolves the concept under the cursor. Hydration
@@ -193,17 +189,22 @@ async function loadCurrentConcept(state: ReviseState) {
   return { bundle, concept };
 }
 
-// Revise entry (first turn of a session): resolve student+lesson, hydrate, pick
-// the deterministic concept queue, and arm the session state. Routing then goes
-// to socratic (ask the first question) or, if nothing needs revising, finish.
-export async function hydrateNode(): Promise<Partial<ReviseState>> {
-  const { studentId, lessonId } = await resolveStudentAndLesson();
-  const bundle = await hydrateForRevision(studentId, lessonId);
+// Revise entry (first turn of a session): the lesson is already resolved into
+// state by the resolver; hydrate it, pick the deterministic concept queue, and
+// arm the session state. Routing then goes to socratic (ask the first question)
+// or, if nothing needs revising, finish.
+export async function hydrateNode(
+  state: ReviseState,
+): Promise<Partial<ReviseState>> {
+  if (!state.lessonId) {
+    throw new Error("revise: hydrate reached without a resolved lesson");
+  }
+  const student = await resolveStudent();
+  const bundle = await hydrateForRevision(student.id, state.lessonId);
   const selected = selectConcepts(bundle.concepts);
-  const sessionTraceId = await startSessionTrace(studentId, lessonId);
+  const sessionTraceId = await startSessionTrace(student.id, state.lessonId);
   return {
-    studentId,
-    lessonId,
+    studentId: student.id,
     sessionConceptIds: selected.map((c) => c.id),
     conceptCursor: 0,
     turnsOnConcept: 0,
@@ -219,8 +220,15 @@ export async function hydrateNode(): Promise<Partial<ReviseState>> {
 // new intent every turn (brief §5.1).
 export function routeStart(state: {
   reviseActive?: boolean;
-}): "classify" | "evaluate" {
-  return state.reviseActive ? "evaluate" : "classify";
+  pendingLessonChoice?: boolean;
+}): "classify" | "evaluate" | "resolveLesson" {
+  if (state.reviseActive) {
+    return "evaluate";
+  }
+  if (state.pendingLessonChoice) {
+    return "resolveLesson";
+  }
+  return "classify";
 }
 
 // Routes out of hydrate: nothing selected (everything already secure) goes

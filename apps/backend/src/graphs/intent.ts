@@ -10,6 +10,12 @@ export const IntentSchema = z.object({
     .min(0)
     .max(1)
     .describe("Confiance, de 0 à 1, dans cette classification."),
+  lessonHint: z
+    .string()
+    .nullable()
+    .describe(
+      "La leçon que l'élève veut réviser ou interroger : numéro de thème, titre, ou sujet mentionné (ex. « Napoléon », « la 12 », « l'école »). null si elle n'en désigne aucune.",
+    ),
 });
 
 export type Classification = z.infer<typeof IntentSchema>;

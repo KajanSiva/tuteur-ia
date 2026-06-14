@@ -122,6 +122,16 @@ describe("routeStart", () => {
     expect(routeStart({ reviseActive: true })).toBe("evaluate");
   });
 
+  it("routes a pending lesson answer back to the resolver, skipping classify", () => {
+    expect(routeStart({ pendingLessonChoice: true })).toBe("resolveLesson");
+  });
+
+  it("lets an active session take precedence over a pending lesson choice", () => {
+    expect(routeStart({ reviseActive: true, pendingLessonChoice: true })).toBe(
+      "evaluate",
+    );
+  });
+
   it("routes to classify when no flow is active", () => {
     expect(routeStart({ reviseActive: false })).toBe("classify");
     expect(routeStart({})).toBe("classify");
