@@ -36,8 +36,11 @@ Classe le DERNIER message de l'élève dans exactement une intention :
 Donne aussi une confidence entre 0 et 1.`;
 
 // We bind the schema as a forced tool and read the parsed tool-call args, rather
-// than withStructuredOutput: the latter's final parser throws under the graph's
-// `streamMode: messages` (it receives empty text → OUTPUT_PARSING_FAILURE).
+// than withStructuredOutput. Two failure modes are avoided at once under the
+// graph's `streamMode: messages`: the default tool-calling parser throws
+// (OUTPUT_PARSING_FAILURE on empty text), and native output (method: jsonSchema)
+// streams the schema JSON as visible UI text. A tool_use block is neither — the
+// classifier stays internal.
 async function classify(state: typeof RouterState.State) {
   const base = await getModel("classifier");
   if (!base.bindTools) {
