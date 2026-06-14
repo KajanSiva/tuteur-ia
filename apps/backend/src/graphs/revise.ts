@@ -40,7 +40,6 @@ export const MasterySignalSchema = z.object({
   status: z.enum(["continue", "resolved"]),
   level: z.enum(["emerging", "developing", "secure"]).optional(),
   rationale: z.string().nullable().optional(),
-  confidence: z.number().min(0).max(1).nullable().optional(),
 });
 
 export type MasterySignal = z.infer<typeof MasterySignalSchema>;
@@ -78,7 +77,6 @@ export function masterySignalToOp(
     reason: `Révision socratique (${forced ? "forcé" : "résolu"})`,
     ...(signal.level !== undefined ? { level: signal.level } : {}),
     ...(signal.rationale != null ? { rationale: signal.rationale } : {}),
-    ...(signal.confidence != null ? { confidence: signal.confidence } : {}),
   };
 }
 
@@ -164,7 +162,6 @@ export function buildEvaluateSystem(
     "- status = \"resolved\" si sa dernière réponse montre qu'elle a compris ou retrouvé l'attendu ; sinon \"continue\" (il faut encore l'aider).",
     "- level = son niveau actuel estimé (emerging | developing | secure).",
     "- rationale = une courte justification.",
-    "- confidence = ta confiance, de 0 à 1.",
     "En cas de doute, choisis \"continue\" : ne déclare jamais un concept acquis sur une réponse floue.",
   ];
   return lines.filter((line) => line !== null).join("\n");
@@ -329,7 +326,6 @@ export async function advanceNode(
         status: state.masterySignal.status === "resolved" ? "resolved" : "forced",
         level: state.masterySignal.level ?? null,
         rationale: state.masterySignal.rationale ?? null,
-        confidence: state.masterySignal.confidence ?? null,
         turns: state.turnsOnConcept,
       });
     }

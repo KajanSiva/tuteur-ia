@@ -49,7 +49,6 @@ async function applyOne(
     ? {
         level: current.level,
         rationale: current.rationale,
-        confidence: current.confidence,
         isLocked: current.isLocked,
       }
     : null;
@@ -73,7 +72,6 @@ async function applyOne(
         conceptId: op.conceptId,
         level: action.snapshot.level,
         rationale: action.snapshot.rationale,
-        confidence: action.snapshot.confidence,
         isLocked: action.snapshot.isLocked,
         version,
         changedBy,

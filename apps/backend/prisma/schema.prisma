@@ -84,7 +84,6 @@ model Mastery {
   conceptId  String       @map("concept_id") @db.Uuid
   level      MasteryLevel
   rationale  String?
-  confidence Float?
   isLocked   Boolean      @default(false) @map("is_locked")
   version    Int          @default(1)
   changedBy  String       @map("changed_by")
@@ -106,7 +105,6 @@ model MasteryHistory {
   conceptId  String       @map("concept_id") @db.Uuid
   level      MasteryLevel
   rationale  String?
-  confidence Float?
   isLocked   Boolean      @map("is_locked")
   version    Int
   changedBy  String       @map("changed_by")

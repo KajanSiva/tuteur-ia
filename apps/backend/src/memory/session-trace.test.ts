@@ -28,7 +28,6 @@ function entry(over: Partial<SessionTraceEntry> = {}): SessionTraceEntry {
     status: "resolved",
     level: "secure",
     rationale: null,
-    confidence: null,
     turns: 1,
     ...over,
   };

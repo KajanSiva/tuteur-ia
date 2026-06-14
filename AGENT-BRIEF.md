@@ -110,7 +110,7 @@ La mémoire durable vit en **Postgres**, pas en fichiers markdown. Elle est **di
 
 > ⚠️ **Stabilité du modèle mémoire — l'étape 1 a été construite AVANT son consommateur (les nœuds LLM de l'étape 2).** Distinguer deux registres :
 > - **Invariants FIGÉS** (ne pas remettre en cause) : (a) les 2 formes état/collection (§4.1) ; (b) la politique d'écriture — merge par champ, silence≠contradiction, DELETE sur contradiction explicite (§4.5) ; (c) état courant **+** history dans une seule transaction (§4.2) ; (d) le découpage functional core / imperative shell de l'applier.
-> - **Contrats de SURFACE provisoires** (attendus de bouger quand l'étape 2 les exerce pour de vrai) : la forme exacte des ops zod (`MasteryOpSchema`/`ProfileOpSchema`), la granularité de `mastery.level` `{emerging, developing, secure}`, les 3 dimensions de `student_profile`, la sémantique de `confidence`/`force`.
+> - **Contrats de SURFACE provisoires** (attendus de bouger quand l'étape 2 les exerce pour de vrai) : la forme exacte des ops zod (`MasteryOpSchema`/`ProfileOpSchema`), la granularité de `mastery.level` `{emerging, developing, secure}`, les 3 dimensions de `student_profile`, la sémantique de `force`. *(`mastery.confidence` : **retirée le 14/06** — write-only sans consommateur ; on la réintroduira si un consommateur réel la réclame. Cf. §16.)*
 > **C'est sain de les ajuster** : laisser le besoin réel du nœud socratique / d'analyse piloter ces changements (migration légère + maj des tests), plutôt que de figer des hypothèses. À l'inverse : **ne pas *étendre* la mémoire** (rollback, `observation`, nouvelles dimensions) sans un consommateur qui le réclame.
 
 ### 4.1 Les deux formes de mémoire (détermine l'op-set)
@@ -148,7 +148,7 @@ concept(id, lesson_id FK, label, precision_bar, precision_note, created_at)
 
 -- MAÎTRISE : overlay par (élève, concept). FORME COLLECTION.
 mastery(student_id FK, concept_id FK, level, rationale TEXT, version,
-        changed_by, run_id, confidence, is_locked, valid_from)  -- PK(student_id, concept_id)
+        changed_by, run_id, is_locked, valid_from)  -- PK(student_id, concept_id)
 -- level = enum {emerging, developing, secure} (décision 12/06) ; is_locked défaut FALSE (mastery = donnée).
 mastery_history(... colonnes snapshot + op, reason, recorded_at)  -- append-only event log (PAS de valid_to)
 
@@ -190,7 +190,7 @@ session_trace(id, student_id FK, lesson_id FK, started_at, ended_at, transcript 
 **L'overwrite aveugle est le tueur silencieux.** Exemple : séance 1 → `mastery.revolution = "comprend causes, confond dates"`. Séance 5 (les dates pas évoquées) → un overwrite produirait `"maîtrise les causes"` et **effacerait** la nuance dates — pas parce que l'élève a progressé, mais parce que l'extracteur ne l'a pas *observée*. **L'absence de preuve devient preuve d'absence.**
 
 Règles :
-- Le nœud d'extraction émet une **liste d'opérations** (sortie structurée zod) `{op, cible, nouvelle_valeur, raison, confidence}`, op ∈ **ADD / UPDATE / DELETE / NOOP**. Un **applier déterministe** les exécute.
+- Le nœud d'extraction émet une **liste d'opérations** (sortie structurée zod) `{op, cible, nouvelle_valeur, raison}`, op ∈ **ADD / UPDATE / DELETE / NOOP**. Un **applier déterministe** les exécute.
 - **UPDATE merge, ne remplace pas.** **DELETE uniquement sur contradiction explicite.** **Silence ≠ contradiction** : un fait non ré-observé cette séance = NOOP, jamais DELETE.
 - **Forme état** (`student_profile`) → l'op-set se réduit en pratique à **UPDATE-merge / NOOP** par champ.
 - **Forme collection** (`mastery`, `observation`) → op-set complet (ADD = 1re évaluation, UPDATE = affiner, DELETE = concept retiré/contredit).
@@ -199,8 +199,8 @@ Règles :
 - **Structure de l'applier (functional core / imperative shell, décision 12/06)** : une **décision PURE** `decideMasteryAction(état_courant, op) → action` porte toute la politique (merge par champ, NOOP, garde `is_locked`/`force`, add↔update normalisé selon présence) — testée **sans DB**, exhaustivement. Une **coquille transactionnelle** lit l'état, appelle la décision, puis écrit état courant **+** ligne d'history. Le `merge` est **par champ** : un champ non fourni par l'op (`undefined`) est **gardé** ; `null` explicite efface (c'est l'enforcement déterministe de "silence ≠ contradiction"). `version` monotone calculée depuis le max history (robuste au delete/re-add).
 
 ### 4.6 Audit / visibilité / rollback
-- Chaque op appliquée écrit une ligne d'history = **snapshot RÉSULTANT (l'état après l'op)** + **provenance** : `op, raison, changed_by (nom du nœud), run_id (thread/run LangGraph), confidence, version, recorded_at`. **Pas de stockage `ancienne_valeur`+`nouvelle_valeur`** (décision 12/06) : la valeur d'avant = la version N-1 de la timeline, on ne duplique pas.
-- **Visibilité** = lire la timeline d'une cible (`SELECT … FROM *_history WHERE … ORDER BY version`) : quoi, quand, par quel nœud, avec quelle confiance.
+- Chaque op appliquée écrit une ligne d'history = **snapshot RÉSULTANT (l'état après l'op)** + **provenance** : `op, raison, changed_by (nom du nœud), run_id (thread/run LangGraph), version, recorded_at`. **Pas de stockage `ancienne_valeur`+`nouvelle_valeur`** (décision 12/06) : la valeur d'avant = la version N-1 de la timeline, on ne duplique pas.
+- **Visibilité** = lire la timeline d'une cible (`SELECT … FROM *_history WHERE … ORDER BY version`) : quoi, quand, par quel nœud.
 - **Rollback** = lire la version N → la **rejouer comme une nouvelle op** (via l'applier, `force: true`). Se logge à son tour (nouvelle version), rien n'est détruit.
 - ⏳ **Visibilité + rollback différés à l'étape 4** (profondeur du moat, décision 12/06) : la **donnée versionnée est déjà en place** (l'applier écrit l'history à chaque op) ; il ne reste qu'à câbler la lecture de timeline et la fonction de restauration (un read + un replay) — elles **réutilisent l'applier**, aucune logique de mutation nouvelle.
 - Visibilité et rollback = **le même mécanisme** (le journal d'opérations EST la piste d'audit). Défense en profondeur : la politique d'écriture *réduit* les mauvaises écritures, l'history *rattrape* celles qui passent.
@@ -277,7 +277,7 @@ BOUCLE EXTERNE DÉTERMINISTE sur les concepts de la leçon :
 > - **Deux nœuds LLM distincts, pas un** : `socratic` (prose ouverte, streamée) et `evaluate` (sortie **structurée** zod = *signal de maîtrise*, modèle cheap, **non streamé**). Sépare proprement l'altitude (agentique ouvert vs raisonnement cadré) et n'entrave pas le streaming.
 > - **Écriture mémoire GATED, pas systématique** : `evaluate` renvoie un statut `continue | resolved` ; `decide` (déterministe) tranche. `applyMasteryOps` + append `session_trace` ne se déclenchent **que** sur `resolved` (ou résolution forcée à `MAX_TURNS`, garde-fou anti-boucle). Un simple `continue` = **aucune écriture**. C'est l'enforcement de la distillation « par concept évalué » (§4.7) : on n'écrit que quand l'agent juge le concept *traité*, pas après chaque interaction.
 > - **Plusieurs allers-retours par concept** sont le mode normal (élève qui galère, réponse partielle à creuser) → la boucle interne n'est pas bornée à 1 tour ; `MAX_TURNS` n'est qu'un plafond de sûreté.
-> - **Le *signal de maîtrise* est un schéma NOUVEAU interne à `revise`** (`{ status, level?, rationale?, confidence? }`), **distinct de `MasteryOpSchema`** (§4) : on ne mappe vers une `MasteryOp` qu'à la résolution → churn minimal sur les contrats de surface de l'étape 1.
+> - **Le *signal de maîtrise* est un schéma NOUVEAU interne à `revise`** (`{ status, level?, rationale? }`), **distinct de `MasteryOpSchema`** (§4) : on ne mappe vers une `MasteryOp` qu'à la résolution → churn minimal sur les contrats de surface de l'étape 1.
 > - **`session_trace`** : l'API mémoire de l'étape 1 ne couvre pas l'écriture du trace → un petit helper d'append (incrémental, §4.6) est ajouté dans `memory/`.
 
 > **Politique de sélection des concepts (décision 13/06) — déterministe, pilotée par les lacunes + récence.** `hydrate` ne déverse pas tous les concepts au socratique ; un sélecteur déterministe construit une file priorisée :
@@ -473,7 +473,7 @@ Le tout conteneurisé (docker compose : backend + Postgres), prêt-à-déployer 
 
 ### Décisions actées 13/06 (étape 2 — cadrage du flow `revise`)
 - **Multi-tours = machine à états run-to-END** (graphe jusqu'à `END` à chaque tour, checkpointer + état parent portent la progression), **pas** une boucle `interrupt()` intra-nœud. Vérifié contre les bonnes pratiques LangGraph. `interrupt()` **reservé au HIL de l'étape 3**. Détail en §5.3 (callout) + §5.1 (saut de `classify`).
-- **Deux nœuds LLM dans `revise`** : `socratic` (prose streamée, ouverte) + `evaluate` (signal de maîtrise **structuré** zod, modèle cheap). Le *signal* est un **schéma interne à `revise`** (`{ status: continue|resolved, level?, rationale?, confidence? }`), distinct de `MasteryOpSchema` ; mappé vers une `MasteryOp` **seulement** à la résolution.
+- **Deux nœuds LLM dans `revise`** : `socratic` (prose streamée, ouverte) + `evaluate` (signal de maîtrise **structuré** zod, modèle cheap). Le *signal* est un **schéma interne à `revise`** (`{ status: continue|resolved, level?, rationale? }`), distinct de `MasteryOpSchema` ; mappé vers une `MasteryOp` **seulement** à la résolution.
 - **Écriture mémoire gated sur résolution de concept** (jamais après chaque interaction) : `applyMasteryOps` + append `session_trace` uniquement sur `resolved` (ou `MAX_TURNS` forcé). C'est l'enforcement de la distillation §4.7. **Plusieurs allers-retours par concept = mode normal** ; `MAX_TURNS` = garde-fou.
 - **Résolution de leçon — jamais de choix implicite** : indice optionnel capturé par `classify` → resolver déterministe (par `metadata.theme`/titre) qui renvoie un **ensemble de candidats**. 1 candidat unique → on enchaîne ; 0 ou >1 → nœud **`clarify`** (liste les leçons depuis la DB et demande). **Pas de leçon par défaut silencieuse.** Flag `pendingLessonChoice` pour traiter la réponse au tour suivant sans re-`classify`. Détail en §6.
 - **`session_trace`** : append incrémental via un helper ajouté à `memory/` (non couvert par l'API étape 1).
@@ -513,7 +513,7 @@ Le tout conteneurisé (docker compose : backend + Postgres), prêt-à-déployer 
   - `classify → routeOnIntent → { revise(=hydrate) | qa/ingest (placeholder) | out_of_scope | clarify }`.
   - branche revise : `revise(hydrate) → afterHydrate{socratic|finish}` ; `evaluate → decideAfterEvaluate{advance|socratic}` ; `advance → decideAfterAdvance{socratic|finish}` ; `socratic → END`, `finish → END`. **Un POST = un tour.**
 - **`classify`** : `getModel("classifier").bindTools([{name, schema: IntentSchema}], {tool_choice})` puis lecture de `response.tool_calls[0].args` validée en zod (voir 16.4 §1 pour le POURQUOI). Malformé → `intent:null` → `clarify`.
-- **`evaluate`** : même pattern `bindTools` (schéma `MasterySignalSchema` = `{status, level?, rationale?, confidence?}`, **distinct** de `MasteryOp`), modèle rôle `evaluate` (cheap). Malformé → `{status:"continue"}` (jamais de résolution fausse).
+- **`evaluate`** : même pattern `bindTools` (schéma `MasterySignalSchema` = `{status, level?, rationale?}`, **distinct** de `MasteryOp`), modèle rôle `evaluate` (cheap). Malformé → `{status:"continue"}` (jamais de résolution fausse).
 - **`hydrate`/`socratic`/`evaluate`/`advance`/`finish`** : résolvent élève+leçon par **scaffolding temporaire** (`findFirstOrThrow orderBy createdAt asc` — **à remplacer en 2.6**). `hydrate` (1er tour) arme la file via `selectConcepts` **et ouvre le `session_trace`** (`sessionTraceId` en état) ; `socratic`/`evaluate`/`advance` re-hydratent par tour (`loadCurrentConcept`, DB autoritaire) et lisent le concept au curseur.
 - **`advance` = SEUL site d'écriture mémoire** : `masterySignalToOp` (pur, champs absents omis → merge §4.5) → `applyMasteryOps` (état+history en transaction, `changedBy:"revise"`, `runId = config.configurable.thread_id`) + `appendSessionTraceEntry`. `finish` ferme le trace (`endSessionTrace`). Gated : `advance` n'est atteint que sur résolution → `continue` n'écrit rien.
 - **`decide` déterministes purs** (`decideAfterEvaluate` : `resolved` ou `turnsOnConcept >= MAX_TURNS(4)` → `advance` ; sinon `socratic`. `decideAfterAdvance` : curseur hors borne → `finish`).

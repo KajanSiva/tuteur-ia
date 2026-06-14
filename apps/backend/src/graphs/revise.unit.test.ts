@@ -48,7 +48,7 @@ function concept(
 }
 
 function mastery(level: ConceptMastery["level"]): ConceptMastery {
-  return { level, rationale: null, confidence: null, isLocked: false, version: 1 };
+  return { level, rationale: null, isLocked: false, version: 1 };
 }
 
 describe("selectConcepts", () => {
@@ -171,9 +171,9 @@ describe("decideAfterEvaluate", () => {
 });
 
 describe("masterySignalToOp", () => {
-  it("carries level, rationale and confidence through on a resolved signal", () => {
+  it("carries level and rationale through on a resolved signal", () => {
     const op = masterySignalToOp(
-      { status: "resolved", level: "secure", rationale: "a retrouvé la date", confidence: 0.9 },
+      { status: "resolved", level: "secure", rationale: "a retrouvé la date" },
       "c1",
     );
     expect(op).toMatchObject({
@@ -181,7 +181,6 @@ describe("masterySignalToOp", () => {
       conceptId: "c1",
       level: "secure",
       rationale: "a retrouvé la date",
-      confidence: 0.9,
     });
     expect(op.reason).toContain("résolu");
   });
@@ -196,16 +195,14 @@ describe("masterySignalToOp", () => {
     const op = masterySignalToOp({ status: "resolved" }, "c1");
     expect(op).not.toHaveProperty("level");
     expect(op).not.toHaveProperty("rationale");
-    expect(op).not.toHaveProperty("confidence");
   });
 
-  it("treats a null rationale/confidence as absent (no overwrite)", () => {
+  it("treats a null rationale as absent (no overwrite)", () => {
     const op = masterySignalToOp(
-      { status: "resolved", level: "secure", rationale: null, confidence: null },
+      { status: "resolved", level: "secure", rationale: null },
       "c1",
     );
     expect(op).not.toHaveProperty("rationale");
-    expect(op).not.toHaveProperty("confidence");
     expect(op.level).toBe("secure");
   });
 });

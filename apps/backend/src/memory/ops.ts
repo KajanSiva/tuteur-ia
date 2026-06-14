@@ -7,7 +7,6 @@ export const MasteryOpSchema = z.object({
   conceptId: z.string(),
   level: z.enum(["emerging", "developing", "secure"]).optional(),
   rationale: z.string().nullable().optional(),
-  confidence: z.number().min(0).max(1).nullable().optional(),
   reason: z.string().min(1),
   // Explicit override required to write a locked row.
   force: z.boolean().optional(),

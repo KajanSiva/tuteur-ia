@@ -9,7 +9,6 @@ export type SessionTraceEntry = {
   status: "resolved" | "forced";
   level: MasteryLevel | null;
   rationale: string | null;
-  confidence: number | null;
   turns: number;
 };
 

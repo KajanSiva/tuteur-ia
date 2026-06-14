@@ -85,7 +85,6 @@ describe("applyMasteryOps", () => {
           op: "add",
           conceptId: WATERLOO,
           level: "developing",
-          confidence: 0.7,
           reason: "hésitation observée sur les dates",
         },
       ],
@@ -97,7 +96,6 @@ describe("applyMasteryOps", () => {
       reason: "hésitation observée sur les dates",
       changedBy: "session_analysis",
       runId: "run-42",
-      confidence: 0.7,
       level: "developing",
     });
     expect(row?.recordedAt).toBeInstanceOf(Date);

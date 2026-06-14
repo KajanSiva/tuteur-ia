@@ -9,7 +9,6 @@ import {
 export type ConceptMastery = {
   level: MasteryLevel;
   rationale: string | null;
-  confidence: number | null;
   isLocked: boolean;
   version: number;
 };
@@ -80,7 +79,6 @@ export async function hydrateForRevision(
         ? {
             level: mastery.level,
             rationale: mastery.rationale,
-            confidence: mastery.confidence,
             isLocked: mastery.isLocked,
             version: mastery.version,
           }

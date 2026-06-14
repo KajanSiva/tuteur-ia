@@ -4,14 +4,12 @@ import type { MasteryOp } from "./ops.js";
 export type MasteryState = {
   level: MasteryLevel;
   rationale: string | null;
-  confidence: number | null;
   isLocked: boolean;
 };
 
 export type MasteryValues = {
   level: MasteryLevel;
   rationale: string | null;
-  confidence: number | null;
 };
 
 export type MasteryAction =
@@ -52,14 +50,11 @@ export function decideMasteryAction(
     const values: MasteryValues = {
       level: op.level ?? current.level,
       rationale: op.rationale !== undefined ? op.rationale : current.rationale,
-      confidence:
-        op.confidence !== undefined ? op.confidence : current.confidence,
     };
 
     if (
       values.level === current.level &&
-      values.rationale === current.rationale &&
-      values.confidence === current.confidence
+      values.rationale === current.rationale
     ) {
       return { kind: "noop", reason: "no change" };
     }
@@ -76,7 +71,6 @@ export function decideMasteryAction(
     values: {
       level: op.level,
       rationale: op.rationale ?? null,
-      confidence: op.confidence ?? null,
     },
   };
 }
