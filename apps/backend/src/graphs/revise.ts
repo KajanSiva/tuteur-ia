@@ -1,4 +1,9 @@
-import { AIMessage, type BaseMessage, SystemMessage } from "@langchain/core/messages";
+import {
+  AIMessage,
+  type BaseMessage,
+  SystemMessage,
+} from "@langchain/core/messages";
+import { z } from "zod";
 
 import { prisma } from "../db/client.js";
 import type { PrecisionBar } from "../generated/prisma/enums.js";
@@ -13,6 +18,37 @@ import {
 // later session — the compounding). A flat cap for now; per-subject/configurable
 // tuning is a later concern.
 const MAX_CONCEPTS_PER_SESSION = 5;
+
+// Safety cap on socratic exchanges per concept. Several back-and-forths per
+// concept are the normal mode; this only stops the inner loop from running
+// forever when the student keeps missing — it forces resolution and moves on.
+export const MAX_TURNS = 4;
+
+// The mastery signal the evaluate node emits — a NEW schema internal to revise,
+// deliberately distinct from MasteryOp (memory/ops.ts). It only says whether the
+// concept is treated for this turn; mapping to a MasteryOp happens at resolution
+// (a later slice). zod validates the shape, never the truth of the content.
+export const MasterySignalSchema = z.object({
+  status: z.enum(["continue", "resolved"]),
+  level: z.enum(["emerging", "developing", "secure"]).optional(),
+  rationale: z.string().nullable().optional(),
+  confidence: z.number().min(0).max(1).nullable().optional(),
+});
+
+export type MasterySignal = z.infer<typeof MasterySignalSchema>;
+
+// The slice of graph state the revise flow reads and writes. The parent graph's
+// RouterState supplies these channels; nodes are typed against this subset.
+export type ReviseState = {
+  messages: BaseMessage[];
+  studentId: string | null;
+  lessonId: string | null;
+  sessionConceptIds: string[] | null;
+  conceptCursor: number;
+  turnsOnConcept: number;
+  reviseActive: boolean;
+  masterySignal: MasterySignal | null;
+};
 
 // Deterministic, gaps-first concept selection: unknown concepts (never assessed)
 // first, then weak ones (emerging/developing); already-secure concepts are left
@@ -38,6 +74,12 @@ const PRECISION_GUIDANCE: Record<PrecisionBar, string> = {
     "elle doit expliquer l'idée avec ses propres mots — vise la compréhension, pas le par-cœur.",
   global:
     "elle doit saisir l'idée générale — l'essentiel suffit, n'exige pas de détail précis.",
+};
+
+const PRECISION_BAR_FOR_EVAL: Record<PrecisionBar, string> = {
+  exact: "il faut le fait précis (date, nom) exact.",
+  intermediate: "une explication correcte avec ses propres mots suffit.",
+  global: "l'idée générale suffit, n'exige pas de détail précis.",
 };
 
 // Assembles the socratic node's system prompt from the hydration bundle and the
@@ -68,7 +110,30 @@ export function buildSocraticSystem(
       ? `À éviter : ${bundle.profile.frictionToAvoid}.`
       : null,
     "",
-    "Commence : pose-lui UNE première question, simple et ouverte, pour l'amener à réfléchir sur ce concept.",
+    "Si l'élève vient de répondre, réagis brièvement à sa réponse (encourage, recadre sans donner la solution) puis relance avec UNE question pour creuser. Sinon, pose-lui UNE première question, simple et ouverte, pour l'amener à réfléchir sur ce concept.",
+  ];
+  return lines.filter((line) => line !== null).join("\n");
+}
+
+// System prompt for the evaluate node: judge whether the student's last answer
+// shows mastery of the current concept, calibrated by its precision bar. The
+// node forces a single structured tool call carrying the mastery signal.
+export function buildEvaluateSystem(
+  bundle: HydrationBundle,
+  concept: HydratedConcept,
+): string {
+  const lines = [
+    `Tu es l'évaluateur de maîtrise d'un tuteur d'histoire pour ${bundle.student.displayName} (CM2). Tu n'écris jamais à l'élève ; tu produis un signal structuré.`,
+    `Concept évalué : « ${concept.label} ».`,
+    concept.precisionNote ? `Référence : ${concept.precisionNote}` : null,
+    `Niveau d'exigence : ${PRECISION_BAR_FOR_EVAL[concept.precisionBar]}`,
+    "",
+    "À partir du DERNIER échange (ta question, sa réponse), juge si elle maîtrise CE concept au niveau d'exigence requis :",
+    "- status = \"resolved\" si sa dernière réponse montre qu'elle a compris ou retrouvé l'attendu ; sinon \"continue\" (il faut encore l'aider).",
+    "- level = son niveau actuel estimé (emerging | developing | secure).",
+    "- rationale = une courte justification.",
+    "- confidence = ta confiance, de 0 à 1.",
+    "En cas de doute, choisis \"continue\" : ne déclare jamais un concept acquis sur une réponse floue.",
   ];
   return lines.filter((line) => line !== null).join("\n");
 }
@@ -83,28 +148,162 @@ async function resolveStudentAndLesson() {
   return { studentId: student.id, lessonId: lesson.id };
 }
 
-// Revise entry (first turn): hydrate the student's state for the lesson, pick the
-// concept to work on, and stream the opening socratic question. The hydration and
-// selection are deterministic; only the question is the LLM.
-export async function reviseNode(state: { messages: BaseMessage[] }) {
+// Re-hydrates the session and resolves the concept under the cursor. Hydration
+// is cheap indexed reads and keeps the DB authoritative across turns (mastery
+// written mid-session is reflected); the queue/cursor in state fix the order.
+async function loadCurrentConcept(state: ReviseState) {
+  if (!state.studentId || !state.lessonId) {
+    throw new Error("revise: missing student/lesson in session state");
+  }
+  const bundle = await hydrateForRevision(state.studentId, state.lessonId);
+  const ids = state.sessionConceptIds ?? [];
+  const currentId = ids[state.conceptCursor];
+  const concept = currentId
+    ? bundle.concepts.find((c) => c.id === currentId)
+    : undefined;
+  return { bundle, concept };
+}
+
+// Revise entry (first turn of a session): resolve student+lesson, hydrate, pick
+// the deterministic concept queue, and arm the session state. Routing then goes
+// to socratic (ask the first question) or, if nothing needs revising, finish.
+export async function hydrateNode(): Promise<Partial<ReviseState>> {
   const { studentId, lessonId } = await resolveStudentAndLesson();
   const bundle = await hydrateForRevision(studentId, lessonId);
+  const selected = selectConcepts(bundle.concepts);
+  return {
+    studentId,
+    lessonId,
+    sessionConceptIds: selected.map((c) => c.id),
+    conceptCursor: 0,
+    turnsOnConcept: 0,
+    reviseActive: true,
+    masterySignal: null,
+  };
+}
 
-  const concept = selectConcepts(bundle.concepts)[0];
+// Entry guard at START: while a revise flow is active, the turn bypasses
+// classify and goes straight to evaluate (treat the message as the student's
+// answer). Without it, a short answer like "1789" would be re-classified as a
+// new intent every turn (brief §5.1).
+export function routeStart(state: {
+  reviseActive?: boolean;
+}): "classify" | "evaluate" {
+  return state.reviseActive ? "evaluate" : "classify";
+}
+
+// Routes out of hydrate: nothing selected (everything already secure) goes
+// straight to the closing message; otherwise the socratic dialogue starts.
+export function afterHydrate(state: ReviseState): "socratic" | "finish" {
+  const queue = state.sessionConceptIds ?? [];
+  return queue.length === 0 ? "finish" : "socratic";
+}
+
+// The agentic node: streams a socratic question (or a relance after an answer)
+// for the current concept. Counts the exchange so the safety cap can fire.
+export async function socraticNode(
+  state: ReviseState,
+): Promise<Partial<ReviseState>> {
+  const { bundle, concept } = await loadCurrentConcept(state);
   if (!concept) {
-    return {
-      messages: [
-        new AIMessage(
-          `Bravo ${bundle.student.displayName}, tu maîtrises déjà tout dans cette leçon ! On pourra en revoir une autre quand tu veux.`,
-        ),
-      ],
-    };
+    throw new Error("revise: socratic reached with no current concept");
   }
-
   const model = await getModel("socratic");
   const response = await model.invoke([
     new SystemMessage(buildSocraticSystem(bundle, concept)),
     ...state.messages,
   ]);
-  return { messages: [response] };
+  return {
+    messages: [response],
+    turnsOnConcept: state.turnsOnConcept + 1,
+  };
+}
+
+// The constrained-reasoning node: reads the latest exchange and emits a
+// structured mastery signal. Same bindTools pattern as classify (a tool_use
+// block, not visible text) so it stays internal under streamMode: messages.
+export async function evaluateNode(
+  state: ReviseState,
+): Promise<Partial<ReviseState>> {
+  const { bundle, concept } = await loadCurrentConcept(state);
+  if (!concept) {
+    // No concept to assess — treat as continue; decide will move on if needed.
+    return { masterySignal: { status: "continue" } };
+  }
+  const base = await getModel("evaluate");
+  if (!base.bindTools) {
+    throw new Error("evaluate model does not support tool calling");
+  }
+  const model = base.bindTools(
+    [
+      {
+        name: "report_mastery",
+        description: "Rapporte le signal de maîtrise de l'élève sur ce concept.",
+        schema: MasterySignalSchema,
+      },
+    ],
+    { tool_choice: "report_mastery" },
+  );
+  const response = await model.invoke([
+    new SystemMessage(buildEvaluateSystem(bundle, concept)),
+    ...state.messages,
+  ]);
+
+  // A malformed signal is treated as "continue": never falsely resolve a concept.
+  const parsed = MasterySignalSchema.safeParse(response.tool_calls?.[0]?.args);
+  return { masterySignal: parsed.success ? parsed.data : { status: "continue" } };
+}
+
+// Deterministic decision after an evaluation: resolve (advance) on a positive
+// signal or once the safety cap is hit; otherwise keep working the concept.
+export function decideAfterEvaluate(
+  state: ReviseState,
+): "advance" | "socratic" {
+  if (state.masterySignal?.status === "resolved") {
+    return "advance";
+  }
+  if (state.turnsOnConcept >= MAX_TURNS) {
+    return "advance";
+  }
+  return "socratic";
+}
+
+// Moves the cursor to the next concept and resets the per-concept counters.
+// Incremental memory write (applyMasteryOps + session_trace) lands here in a
+// later slice; for now resolution only advances the loop.
+export async function advanceNode(
+  state: ReviseState,
+): Promise<Partial<ReviseState>> {
+  return {
+    conceptCursor: state.conceptCursor + 1,
+    turnsOnConcept: 0,
+    masterySignal: null,
+  };
+}
+
+// Deterministic decision after advancing: more concepts left → keep going,
+// otherwise the session is done.
+export function decideAfterAdvance(state: ReviseState): "socratic" | "finish" {
+  const queue = state.sessionConceptIds ?? [];
+  return state.conceptCursor >= queue.length ? "finish" : "socratic";
+}
+
+// Closes the session: a final encouragement and a reset of the session state so
+// the next turn re-enters through the router (classify) rather than the loop.
+export async function finishNode(
+  state: ReviseState,
+): Promise<Partial<ReviseState>> {
+  const { bundle } = await loadCurrentConcept(state);
+  return {
+    messages: [
+      new AIMessage(
+        `Bravo ${bundle.student.displayName}, on a fait le tour pour aujourd'hui ! Tu peux revenir réviser quand tu veux. 😊`,
+      ),
+    ],
+    reviseActive: false,
+    sessionConceptIds: null,
+    conceptCursor: 0,
+    turnsOnConcept: 0,
+    masterySignal: null,
+  };
 }

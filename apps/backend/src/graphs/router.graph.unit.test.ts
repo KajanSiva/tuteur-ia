@@ -10,6 +10,10 @@ describe("buildRouterGraph", () => {
     for (const node of [
       "classify",
       "revise",
+      "socratic",
+      "evaluate",
+      "advance",
+      "finish",
       "qa",
       "ingest",
       "out_of_scope",

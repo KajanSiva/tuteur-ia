@@ -5,7 +5,30 @@ import type {
   HydratedConcept,
   HydrationBundle,
 } from "../memory/hydration.js";
-import { buildSocraticSystem, selectConcepts } from "./revise.js";
+import {
+  afterHydrate,
+  buildSocraticSystem,
+  decideAfterAdvance,
+  decideAfterEvaluate,
+  MAX_TURNS,
+  type ReviseState,
+  routeStart,
+  selectConcepts,
+} from "./revise.js";
+
+function reviseState(over: Partial<ReviseState> = {}): ReviseState {
+  return {
+    messages: [],
+    studentId: "s",
+    lessonId: "l",
+    sessionConceptIds: ["c1", "c2"],
+    conceptCursor: 0,
+    turnsOnConcept: 0,
+    reviseActive: true,
+    masterySignal: null,
+    ...over,
+  };
+}
 
 function concept(
   id: string,
@@ -89,5 +112,76 @@ describe("buildSocraticSystem", () => {
   it("surfaces a known mastery level when there is one", () => {
     const prompt = buildSocraticSystem(bundle, concept("x", mastery("developing")));
     expect(prompt).toContain("developing");
+  });
+});
+
+describe("routeStart", () => {
+  it("skips classify and goes to evaluate while a revise flow is active", () => {
+    expect(routeStart({ reviseActive: true })).toBe("evaluate");
+  });
+
+  it("routes to classify when no flow is active", () => {
+    expect(routeStart({ reviseActive: false })).toBe("classify");
+    expect(routeStart({})).toBe("classify");
+  });
+});
+
+describe("afterHydrate", () => {
+  it("starts the dialogue when concepts were selected", () => {
+    expect(afterHydrate(reviseState({ sessionConceptIds: ["c1"] }))).toBe(
+      "socratic",
+    );
+  });
+
+  it("closes immediately when nothing needs revising", () => {
+    expect(afterHydrate(reviseState({ sessionConceptIds: [] }))).toBe("finish");
+    expect(afterHydrate(reviseState({ sessionConceptIds: null }))).toBe("finish");
+  });
+});
+
+describe("decideAfterEvaluate", () => {
+  it("advances on a resolved signal", () => {
+    const state = reviseState({ masterySignal: { status: "resolved" } });
+    expect(decideAfterEvaluate(state)).toBe("advance");
+  });
+
+  it("keeps working the concept on a continue signal under the cap", () => {
+    const state = reviseState({
+      masterySignal: { status: "continue" },
+      turnsOnConcept: 1,
+    });
+    expect(decideAfterEvaluate(state)).toBe("socratic");
+  });
+
+  it("forces resolution once the safety cap is reached, despite continue", () => {
+    const state = reviseState({
+      masterySignal: { status: "continue" },
+      turnsOnConcept: MAX_TURNS,
+    });
+    expect(decideAfterEvaluate(state)).toBe("advance");
+  });
+
+  it("keeps working when there is no signal yet and the cap is not reached", () => {
+    expect(decideAfterEvaluate(reviseState({ masterySignal: null }))).toBe(
+      "socratic",
+    );
+  });
+});
+
+describe("decideAfterAdvance", () => {
+  it("continues to the next concept when the cursor is in range", () => {
+    const state = reviseState({
+      sessionConceptIds: ["c1", "c2"],
+      conceptCursor: 1,
+    });
+    expect(decideAfterAdvance(state)).toBe("socratic");
+  });
+
+  it("finishes once the cursor passes the last concept", () => {
+    const state = reviseState({
+      sessionConceptIds: ["c1", "c2"],
+      conceptCursor: 2,
+    });
+    expect(decideAfterAdvance(state)).toBe("finish");
   });
 });

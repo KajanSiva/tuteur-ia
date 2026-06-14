@@ -11,11 +11,23 @@ import type { Intent } from "@tuteur/shared";
 
 import { getModel } from "../llm/models.js";
 import { IntentSchema, routeOnIntent } from "./intent.js";
-import { reviseNode } from "./revise.js";
+import {
+  advanceNode,
+  afterHydrate,
+  decideAfterAdvance,
+  decideAfterEvaluate,
+  evaluateNode,
+  finishNode,
+  hydrateNode,
+  type MasterySignal,
+  routeStart,
+  socraticNode,
+} from "./revise.js";
 
-// Parent graph state: the shared transcript plus the router's own scalars.
-// MessagesAnnotation supplies the append reducer for `messages`; scalars use the
-// default last-value reducer.
+// Parent graph state: the shared transcript, the router's own scalars, and the
+// revise flow's session channels (the concept loop, carried across turns by the
+// checkpointer). MessagesAnnotation supplies the append reducer for `messages`;
+// every scalar uses the default last-value reducer.
 export const RouterState = Annotation.Root({
   ...MessagesAnnotation.spec,
   intent: Annotation<Intent | null>({
@@ -23,6 +35,34 @@ export const RouterState = Annotation.Root({
     default: () => null,
   }),
   confidence: Annotation<number | null>({
+    reducer: (_, next) => next,
+    default: () => null,
+  }),
+  studentId: Annotation<string | null>({
+    reducer: (_, next) => next,
+    default: () => null,
+  }),
+  lessonId: Annotation<string | null>({
+    reducer: (_, next) => next,
+    default: () => null,
+  }),
+  sessionConceptIds: Annotation<string[] | null>({
+    reducer: (_, next) => next,
+    default: () => null,
+  }),
+  conceptCursor: Annotation<number>({
+    reducer: (_, next) => next,
+    default: () => 0,
+  }),
+  turnsOnConcept: Annotation<number>({
+    reducer: (_, next) => next,
+    default: () => 0,
+  }),
+  reviseActive: Annotation<boolean>({
+    reducer: (_, next) => next,
+    default: () => false,
+  }),
+  masterySignal: Annotation<MasterySignal | null>({
     reducer: (_, next) => next,
     default: () => null,
   }),
@@ -96,18 +136,29 @@ async function clarify() {
   };
 }
 
-// Router workflow: classify (the only LLM call) → deterministic conditional
-// edge → one terminal node per intent. revise/qa/ingest are placeholders until
-// their subgraphs land; out_of_scope and clarify are their final behaviour.
+// Router workflow with the revise state machine. A START guard skips classify
+// while a revise flow is active (the turn is the student's answer → evaluate).
+// Otherwise classify (the only router LLM call) routes by intent. The revise
+// loop is run-to-END + re-invoke per message: one POST = one dialogue turn.
+//   START ─ active? ─ yes → evaluate ─ decide ─ advance ─ decide ─ socratic/finish
+//          └ no → classify → { revise(hydrate) → socratic/finish | qa | ingest | … }
+// qa/ingest are placeholders; out_of_scope and clarify are their final behaviour.
 export function buildRouterGraph(checkpointer?: BaseCheckpointSaver) {
   return new StateGraph(RouterState)
     .addNode("classify", classify)
-    .addNode("revise", reviseNode)
+    .addNode("revise", hydrateNode)
+    .addNode("socratic", socraticNode)
+    .addNode("evaluate", evaluateNode)
+    .addNode("advance", advanceNode)
+    .addNode("finish", finishNode)
     .addNode("qa", flowPlaceholder("qa"))
     .addNode("ingest", flowPlaceholder("ingest"))
     .addNode("out_of_scope", outOfScope)
     .addNode("clarify", clarify)
-    .addEdge(START, "classify")
+    .addConditionalEdges(START, routeStart, {
+      classify: "classify",
+      evaluate: "evaluate",
+    })
     .addConditionalEdges("classify", routeOnIntent, {
       revise: "revise",
       qa: "qa",
@@ -115,7 +166,20 @@ export function buildRouterGraph(checkpointer?: BaseCheckpointSaver) {
       out_of_scope: "out_of_scope",
       clarify: "clarify",
     })
-    .addEdge("revise", END)
+    .addConditionalEdges("revise", afterHydrate, {
+      socratic: "socratic",
+      finish: "finish",
+    })
+    .addConditionalEdges("evaluate", decideAfterEvaluate, {
+      advance: "advance",
+      socratic: "socratic",
+    })
+    .addConditionalEdges("advance", decideAfterAdvance, {
+      socratic: "socratic",
+      finish: "finish",
+    })
+    .addEdge("socratic", END)
+    .addEdge("finish", END)
     .addEdge("qa", END)
     .addEdge("ingest", END)
     .addEdge("out_of_scope", END)
