@@ -15,6 +15,20 @@ export function getLessonWithConcepts(lessonId: string) {
   });
 }
 
+// Lightweight lesson list for the deterministic resolver: title + theme + the
+// concept labels (so a lesson can be matched by its subject, not only its title).
+export function getLessonsForResolution() {
+  return prisma.lesson.findMany({
+    orderBy: { createdAt: "asc" },
+    select: {
+      id: true,
+      title: true,
+      metadata: true,
+      concepts: { select: { label: true }, orderBy: { id: "asc" } },
+    },
+  });
+}
+
 export function getMasteryForLesson(studentId: string, lessonId: string) {
   return prisma.mastery.findMany({
     where: { studentId, concept: { lessonId } },
