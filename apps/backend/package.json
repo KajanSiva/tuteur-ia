@@ -19,6 +19,7 @@
     "@langchain/anthropic": "^1.4.1",
     "@langchain/core": "^1.1.49",
     "@langchain/langgraph": "^1.4.2",
+    "@langchain/langgraph-checkpoint-postgres": "^1.0.3",
     "@prisma/adapter-pg": "^7.8.0",
     "@prisma/client": "^7.8.0",
     "@tuteur/shared": "workspace:*",

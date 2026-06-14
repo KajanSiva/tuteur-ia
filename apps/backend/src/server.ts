@@ -14,6 +14,7 @@ import {
 import Fastify from "fastify";
 import { z } from "zod";
 
+import { createCheckpointer } from "./checkpoint/index.js";
 import { buildRouterGraph, type RouterState } from "./graphs/router.graph.js";
 
 const app = Fastify({ logger: true });
@@ -21,7 +22,7 @@ const app = Fastify({ logger: true });
 // Permissive CORS for local dev (Vite frontend on a different port).
 await app.register(cors, { origin: true });
 
-const router = buildRouterGraph();
+const router = buildRouterGraph(await createCheckpointer());
 
 // Envelope of a useChat request. The messages array is validated deeply by
 // validateUIMessages below; here we only assert the transport shape.
@@ -43,7 +44,15 @@ app.post("/api/chat", async (request, reply) => {
   const uiMessages = await validateUIMessages<TutorUIMessage>({
     messages: parsed.data.messages,
   });
-  const messages = await toBaseMessages(uiMessages);
+  // The checkpointer holds the thread's transcript; we feed only the newest user
+  // message and let MessagesAnnotation's append reducer extend the history.
+  // Sending the whole list each turn would duplicate the persisted messages.
+  const latest = uiMessages.at(-1);
+  if (!latest) {
+    reply.code(400);
+    return { error: "chat request has no messages" };
+  }
+  const messages = await toBaseMessages([latest]);
 
   const stream = createUIMessageStream({
     execute: async ({ writer }) => {

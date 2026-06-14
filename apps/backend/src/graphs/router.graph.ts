@@ -1,6 +1,7 @@
 import { AIMessage, SystemMessage } from "@langchain/core/messages";
 import {
   Annotation,
+  type BaseCheckpointSaver,
   END,
   MessagesAnnotation,
   START,
@@ -98,7 +99,7 @@ async function clarify() {
 // Router workflow: classify (the only LLM call) → deterministic conditional
 // edge → one terminal node per intent. revise/qa/ingest are placeholders until
 // their subgraphs land; out_of_scope and clarify are their final behaviour.
-export function buildRouterGraph() {
+export function buildRouterGraph(checkpointer?: BaseCheckpointSaver) {
   return new StateGraph(RouterState)
     .addNode("classify", classify)
     .addNode("revise", reviseNode)
@@ -119,5 +120,5 @@ export function buildRouterGraph() {
     .addEdge("ingest", END)
     .addEdge("out_of_scope", END)
     .addEdge("clarify", END)
-    .compile();
+    .compile({ checkpointer });
 }
