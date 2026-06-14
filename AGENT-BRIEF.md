@@ -479,4 +479,55 @@ Le tout conteneurisé (docker compose : backend + Postgres), prêt-à-déployer 
 - **`session_trace`** : append incrémental via un helper ajouté à `memory/` (non couvert par l'API étape 1).
 - **Sélection des concepts = déterministe, pilotée par les lacunes + récence** (détail dans le callout §5.3) : tiers inconnu → faible → secure périmé ; bornée par séance (borne **configurable**, pas en dur) ; lacunes d'abord, ordre de leçon en départage. La sélection ne donne **pas** la main au LLM (altitude : code décide *quel* concept).
 - **Temporalité / répétition espacée** (décision 13/06, profondeur = **récence + intervalle par niveau**, **pas** SM-2) : un concept secure redevient éligible quand `now() − last_reviewed_at ≥ intervalle(level)`. **Éligibilité dérivée à la lecture, pas un statut stocké** (un flag matérialisé serait faux entre deux runs). Seule écriture nouvelle = `mastery.last_reviewed_at`, bumpée à chaque révision aboutie (même sans changement de niveau), découplée du `NOOP` “no change”. **Construit après le cœur** (slice 2.7).
-- **Découpage en sous-tranches (un commit validé chacune)** : 2.0 deps + factory modèle par-rôle · 2.1 router parent (classify → arêtes → sous-graphes stub) · 2.2 seam streaming bout-en-bout + front `useChat` · 2.3 `revise` 1er tour · 2.4 multi-tours + `evaluate` gated + `PostgresSaver` · 2.5 update mémoire incrémental + `session_trace` · 2.6 resolver leçon (candidats + `clarify`) + finitions end-to-end · **2.7 tier temporel** (migration `last_reviewed_at` + bump applier découplé + 3e tier de sélection récence/intervalle) · **2.8 garde-fou ESLint ciblé** (dernière slice de l'étape — `typescript-eslint` minimal : `no-floating-promises`, famille `no-unsafe-*`, `no-unnecessary-type-assertion`, `no-non-null-assertion`, et `consistent-type-assertions` avec `objectLiteralTypeAssertions: 'never'` (interdit `as` **sur les littéraux d'objet** → pousse vers `satisfies`, sans bannir les assertions d'interop) ; **PAS** d'interdiction globale de `as` — câblé en `pnpm lint` + pipeline turbo).
+- **Découpage en sous-tranches (un commit validé chacune)** — état détaillé en **§16** : ✅ 2.0 deps + factory · ✅ 2.1 router parent · ✅ 2.2 seam streaming + front `useChat` · ✅ 2.3 `revise` 1er tour · ⏳ 2.4 multi-tours + `evaluate` gated + `PostgresSaver` + filtre nœuds internes · ⏳ 2.5 update mémoire incrémental + `session_trace` · ⏳ 2.6 resolver leçon (candidats + `clarify`) + finitions end-to-end · ⏳ 2.7 tier temporel (`last_reviewed_at` + 3e tier sélection) · ⏳ 2.8 garde-fou ESLint ciblé (`typescript-eslint` minimal : `no-floating-promises`, famille `no-unsafe-*`, `no-unnecessary-type-assertion`, `no-non-null-assertion`, `consistent-type-assertions` avec `objectLiteralTypeAssertions: 'never'` → pousse vers `satisfies` ; **PAS** d'interdiction globale de `as`).
+
+---
+
+## 16. Étape 2 — journal d'implémentation & état (mise à jour 14/06)
+
+> **Pour un agent qui reprend à froid :** cette section est le point d'entrée de l'étape 2. Elle dit ce qui tourne déjà, ce qui reste, et les pièges techniques découverts (à lire AVANT de coder 2.4+). Les décisions de conception sont en §5.3 / §6 / §15 ; ici c'est l'état réel du code.
+
+### 16.1 Versions installées (vérifiées, pinées)
+- `@langchain/langgraph@^1.4.2`, `@langchain/core@^1.1.49`, `@langchain/anthropic@^1.4.1`, `langchain@^1.4.5` (méta-package, pour `initChatModel`).
+- `ai@^6.0.204`, `@ai-sdk/react@^3.0.206`, `@ai-sdk/langchain@^2.0.211`.
+- zod **v4**, Prisma **7**, Node 20.
+
+### 16.2 État par sous-slice
+| # | État | Contenu livré | Fichiers clés |
+|---|---|---|---|
+| 2.0 | ✅ | Factory modèle par-rôle. `getModel(role)` **async** via `initChatModel` (multi-provider réel : provider = config, `LLM_PROVIDER_/MODEL_/TEMPERATURE_<ROLE>`). Politique pure `resolveModelConfig` testée. | `llm/models.ts` (+`.unit.test`) |
+| 2.1 | ✅ | Router parent : nœud `classify` + `routeOnIntent` pur (confiance basse/intent absent → `clarify`). Sous-graphes `qa`/`ingest` = placeholders ; `out_of_scope`/`clarify` finaux. | `graphs/intent.ts`, `graphs/router.graph.ts` (+`.unit.test`) |
+| 2.2 | ✅ | Seam streaming bout-en-bout. `/api/chat` valide le body, `toBaseMessages`, lance le graphe, renvoie un `UIMessageStream` pipé dans Fastify. Front `useChat<TutorUIMessage>` + rendu parts-based. | `server.ts`, `frontend/src/App.tsx`, `shared/src/index.ts` (`TutorUIMessage`) |
+| 2.3 | ✅ | `revise` 1er tour : `hydrate` (via `hydrateForRevision`) → `selectConcepts` (lacunes d'abord, tiers 1+2) → question socratique **streamée token/token**. Vérifié en live (navigateur + curl). | `graphs/revise.ts` (+`.unit.test`), `server.ts` (handler streaming) |
+| 2.4 | ⏳ | Multi-tours (machine à états run-to-END) : nœud `evaluate` (signal de maîtrise structuré) + `decide` déterministe + boucle concepts portée par l'état ; **`PostgresSaver`** (checkpointer) ; saut de `classify` sur flow actif (§5.1) ; **filtre nœuds internes** hors flux UI (cf. 16.4 §3). | `checkpoint/`, `graphs/revise.ts`, `graphs/router.graph.ts`, `server.ts` |
+| 2.5 | ⏳ | Update mémoire incrémental : `applyMasteryOps` à la résolution d'un concept + helper d'append `session_trace`. | `graphs/revise.ts`, `memory/` (helper trace) |
+| 2.6 | ⏳ | Resolver de leçon (ensemble de candidats + `clarify`, **remplace** le scaffolding 16.3) ; flag `pendingLessonChoice` ; passe end-to-end 2-3 séances. | `graphs/`, `memory/repositories.ts` |
+| 2.7 | ⏳ | Tier temporel (répétition espacée) : migration `mastery.last_reviewed_at` + bump applier découplé du NOOP + 3e tier de sélection (récence/intervalle par niveau). | `prisma/schema.prisma`, `memory/`, `graphs/revise.ts` |
+| 2.8 | ⏳ | Garde-fou ESLint ciblé (dernière slice). | racine + `eslint.config` |
+
+### 16.3 Architecture câblée à ce jour (ce qui tourne vraiment)
+- **Flux d'un POST `/api/chat`** : `ChatBodySchema.safeParse` (400 si malformé) → `validateUIMessages` → `toBaseMessages` → `router.stream({messages},{streamMode:["messages","values"],configurable:{thread_id}})` → on **draine** le `toUIMessageStream` via un reader loop dans `createUIMessageStream` : on forwarde chaque chunk, on note si un `text-delta` est passé (`streamedText`), et **si rien n'a streamé** (nœud déterministe) on émet le texte final de l'état comme un text part (fallback). Réponse pipée dans la reply Fastify (`Readable.fromWeb`, cast d'interop documenté).
+- **Graphe parent** (`RouterState` = `MessagesAnnotation` + `intent`/`confidence`, défauts `null`) : `START → classify → routeOnIntent → { revise (réel) | qa/ingest (placeholder) | out_of_scope | clarify } → END`.
+- **`classify`** : `getModel("classifier").bindTools([{name, schema: IntentSchema}], {tool_choice})` puis lecture de `response.tool_calls[0].args` validée en zod (voir 16.4 §1 pour le POURQUOI). Malformé → `intent:null` → `clarify`.
+- **`revise`** (1 nœud pour l'instant, pas encore de boucle) : résout élève+leçon par **scaffolding temporaire** (`prisma.student/lesson.findFirstOrThrow({orderBy:createdAt asc})` — **à remplacer en 2.6**), hydrate, `selectConcepts(...)[0]`, build prompt, `getModel("socratic").invoke(...)` (streame sous `streamMode:messages`).
+- **Pas encore câblés** : checkpointer (in-memory implicite, état non persistant entre POST), `evaluate`/`decide`, écriture mémoire, resolver, filtre nœuds internes.
+
+### 16.4 Leçons apprises / pièges (À LIRE avant 2.4+)
+1. **`withStructuredOutput` CASSE sous `streamMode:["messages"]`** (`OUTPUT_PARSING_FAILURE` : son parser reçoit du texte vide). Diagnostiqué en script isolé. **Fix retenu : `bindTools` + lecture directe de `tool_calls[0].args` + validation zod.** ❌ `disableStreaming` = no-op sous LangGraph (ne change pas le chemin). ❌ `method:"jsonSchema"` (sortie native) corrige le parse MAIS **stream le JSON comme texte visible** dans l'UI et casse le fallback déterministe (16.4 §2). Le `tool_use` n'étant pas du texte, `bindTools` reste le bon choix tant qu'on streame le graphe. → **`evaluate` (2.4) DOIT utiliser le même pattern `bindTools`.**
+2. **`toUIMessageStream` ne surface PAS un `AIMessage` statique** (texte d'un nœud déterministe sans appel LLM) — il n'émet du texte que pour les vrais tokens LLM (`streamMode:messages`). D'où le **fallback** dans le handler (réécrit le texte final si rien n'a streamé). Garder ce fallback tant qu'il y a des nœuds à texte fixe (out_of_scope, clarify, placeholders).
+3. **`classify` transite encore dans le flux UI** (ses chunks `tool_use` sont *ignorés* par le front car non-texte → pas d'artefact visible, mais ils passent). Le §7 veut « classify pas streamé à l'UI ». **Le fix propre = un filtre qui exclut les nœuds internes du flux** (drop des tuples `["messages",[chunk,{langgraph_node:"classify"|"evaluate"}]]` avant `toUIMessageStream`). **À construire en 2.4** car `evaluate` est aussi un nœud structuré interne qui aurait le même besoin (un filtre générique règle les deux). *(Friction de typage anticipée : la sortie de `router.stream` est un `ReadableStream` ; un générateur async ne matche pas le type attendu par `toUIMessageStream` sans repasser par `Readable.toWeb(Readable.from(gen))` + un cast d'interop. Prévoir.)*
+4. **Multi-provider** : on instancie via `initChatModel` (du package `langchain`). `getModel` est **async** (import lazy du provider) → tous les appelants `await`. Pour brancher un 2e provider : `pnpm add @langchain/<provider>` + `LLM_PROVIDER_<ROLE>=...`.
+5. **`tsx watch` + `EADDRINUSE` sur :3001** (piège du CLAUDE.md, vu plusieurs fois) : un reload peut laisser un process zombie qui sert l'**ancien** code. Avant de tester un changement backend : `preview_stop` puis tuer le node sur 3001 (`lsof -ti :3001 | …`) et redémarrer **proprement**. Ne pas se fier au reload silencieux.
+6. **DB de dev ≠ `tuteur_test`** : les tests provisionnent `tuteur_test`, mais le serveur de dev tape `DATABASE_URL` (base `tuteur`). Avant de tester `revise` : `prisma migrate deploy` + `db:seed` **sur la base de dev** (sinon hydrate échoue / pas de concepts).
+7. **Typecheck** : utiliser **`pnpm typecheck` racine (turbo, `dependsOn:^build`)** qui rebuild `shared` d'abord — pas `pnpm -r typecheck` (bypasse le build de `shared` → faux négatifs sur `TutorUIMessage`). Le `dist` de `shared` est consommé par le front (typecheck **et** runtime Vite).
+8. **Strictness TS** activée (`tsconfig.base.json`) : `noUncheckedIndexedAccess`, `noUnusedLocals/Parameters`, `noFallthroughCasesInSwitch`, `verbatimModuleSyntax`. → `concepts[i]` est `T | undefined`, gérer.
+
+### 16.5 Lancer & tester en local
+- Postgres up (`docker compose up -d postgres`), puis `prisma migrate deploy` + `db:seed` (base de dev).
+- Serveurs : `.claude/launch.json` a 2 configs (`backend` :3001, `frontend` :5173) ; le proxy Vite `/api → :3001` existe.
+- Test direct backend (format UIMessage) :
+  ```bash
+  curl -sN -X POST http://localhost:3001/api/chat -H 'content-type: application/json' \
+    -d '{"id":"t1","messages":[{"id":"m1","role":"user","parts":[{"type":"text","text":"fais-moi réviser la leçon sur Napoléon"}]}]}'
+  ```
+  Attendu : `text-delta` de la question socratique (revise) ou de la redirection (out_of_scope). Aucun `type:"error"`.
