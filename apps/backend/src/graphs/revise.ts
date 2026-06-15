@@ -16,6 +16,7 @@ import {
 } from "../memory/hydration.js";
 import { applyMasteryOps } from "../memory/mastery-applier.js";
 import type { MasteryOp } from "../memory/ops.js";
+import { isSecureDue, secureIntervalsDays } from "../memory/srs.js";
 import {
   appendSessionTraceEntry,
   endSessionTrace,
@@ -80,13 +81,16 @@ export function masterySignalToOp(
   };
 }
 
-// Deterministic, gaps-first concept selection: unknown concepts (never assessed)
-// first, then weak ones (emerging/developing); already-secure concepts are left
-// out. Lesson order is preserved within each tier (the bundle is lesson-ordered).
-// The stale-secure tier (spaced repetition) is a later slice.
+// Deterministic, gaps-first concept selection. Three tiers, in priority order:
+// unknown (never assessed), weak (emerging/developing — always eligible), then
+// stale-secure (mastered but past its spaced-repetition interval, derived
+// against `now`). Fresh-secure concepts are left out. Lesson order is preserved
+// within each tier (the bundle is lesson-ordered).
 export function selectConcepts(
   concepts: HydratedConcept[],
+  now: Date,
   max: number = MAX_CONCEPTS_PER_SESSION,
+  intervalsDays: number[] = secureIntervalsDays(),
 ): HydratedConcept[] {
   const unknown = concepts.filter((c) => c.mastery === null);
   const weak = concepts.filter(
@@ -94,7 +98,13 @@ export function selectConcepts(
       c.mastery !== null &&
       (c.mastery.level === "emerging" || c.mastery.level === "developing"),
   );
-  return [...unknown, ...weak].slice(0, max);
+  const staleSecure = concepts.filter(
+    (c) =>
+      c.mastery !== null &&
+      c.mastery.level === "secure" &&
+      isSecureDue(c.mastery.lastReviewedAt, c.mastery.reviewStep, now, intervalsDays),
+  );
+  return [...unknown, ...weak, ...staleSecure].slice(0, max);
 }
 
 const PRECISION_GUIDANCE: Record<PrecisionBar, string> = {
@@ -201,7 +211,7 @@ export async function hydrateNode(
   }
   const student = await resolveStudent();
   const bundle = await hydrateForRevision(student.id, state.lessonId);
-  const selected = selectConcepts(bundle.concepts);
+  const selected = selectConcepts(bundle.concepts, new Date());
   const sessionTraceId = await startSessionTrace(student.id, state.lessonId);
   return {
     studentId: student.id,

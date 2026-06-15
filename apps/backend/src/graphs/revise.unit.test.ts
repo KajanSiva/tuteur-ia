@@ -47,34 +47,63 @@ function concept(
   };
 }
 
-function mastery(level: ConceptMastery["level"]): ConceptMastery {
-  return { level, rationale: null, isLocked: false, version: 1 };
+const NOW = new Date("2026-06-15T12:00:00Z");
+const daysAgo = (n: number) => new Date(NOW.getTime() - n * 24 * 60 * 60 * 1000);
+
+function mastery(
+  level: ConceptMastery["level"],
+  over: Partial<ConceptMastery> = {},
+): ConceptMastery {
+  return {
+    level,
+    rationale: null,
+    isLocked: false,
+    version: 1,
+    lastReviewedAt: null,
+    reviewStep: 0,
+    ...over,
+  };
 }
 
 describe("selectConcepts", () => {
-  it("prioritizes unknown then weak, dropping already-secure concepts", () => {
+  it("orders unknown, then weak, then stale-secure; drops fresh-secure", () => {
     const concepts = [
-      concept("a", mastery("secure")),
-      concept("b", null),
-      concept("c", mastery("developing")),
-      concept("d", mastery("emerging")),
+      concept("a", mastery("secure", { lastReviewedAt: daysAgo(0.1) })), // fresh → out
+      concept("b", null), // unknown
+      concept("c", mastery("developing")), // weak
+      concept("d", mastery("emerging")), // weak
+      concept("e", mastery("secure", { lastReviewedAt: daysAgo(30), reviewStep: 3 })), // stale → in
     ];
-    expect(selectConcepts(concepts).map((c) => c.id)).toEqual(["b", "c", "d"]);
+    expect(selectConcepts(concepts, NOW).map((c) => c.id)).toEqual([
+      "b",
+      "c",
+      "d",
+      "e",
+    ]);
   });
 
   it("preserves lesson order within each tier", () => {
     const concepts = [concept("a", null), concept("b", null)];
-    expect(selectConcepts(concepts).map((c) => c.id)).toEqual(["a", "b"]);
+    expect(selectConcepts(concepts, NOW).map((c) => c.id)).toEqual(["a", "b"]);
   });
 
   it("caps the session at the requested size, carrying the rest over", () => {
     const concepts = [concept("a", null), concept("b", null), concept("c", null)];
-    expect(selectConcepts(concepts, 2).map((c) => c.id)).toEqual(["a", "b"]);
+    expect(selectConcepts(concepts, NOW, 2).map((c) => c.id)).toEqual(["a", "b"]);
   });
 
-  it("returns nothing when every concept is already secure", () => {
-    const concepts = [concept("a", mastery("secure"))];
-    expect(selectConcepts(concepts)).toEqual([]);
+  it("leaves out a secure concept still within its interval", () => {
+    const concepts = [
+      concept("a", mastery("secure", { lastReviewedAt: daysAgo(0), reviewStep: 0 })),
+    ];
+    expect(selectConcepts(concepts, NOW)).toEqual([]);
+  });
+
+  it("re-includes a secure concept once its interval has elapsed", () => {
+    const concepts = [
+      concept("a", mastery("secure", { lastReviewedAt: daysAgo(2), reviewStep: 0 })),
+    ];
+    expect(selectConcepts(concepts, NOW).map((c) => c.id)).toEqual(["a"]);
   });
 });
 

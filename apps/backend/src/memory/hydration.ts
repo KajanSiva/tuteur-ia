@@ -11,6 +11,9 @@ export type ConceptMastery = {
   rationale: string | null;
   isLocked: boolean;
   version: number;
+  // Spaced-repetition state (null lastReviewedAt = never stamped → due).
+  lastReviewedAt: Date | null;
+  reviewStep: number;
 };
 
 export type HydratedConcept = {
@@ -81,6 +84,8 @@ export async function hydrateForRevision(
             rationale: mastery.rationale,
             isLocked: mastery.isLocked,
             version: mastery.version,
+            lastReviewedAt: mastery.lastReviewedAt,
+            reviewStep: mastery.reviewStep,
           }
         : null,
     };
