@@ -1,18 +1,17 @@
-import { AIMessage, type BaseMessage } from "@langchain/core/messages";
+import { AIMessage, type BaseMessage, SystemMessage } from "@langchain/core/messages";
 import { END } from "@langchain/langgraph";
+import { z } from "zod";
 
+import { getModel } from "../llm/models.js";
 import { getLessonsForResolution } from "../memory/repositories.js";
 
-// Deterministic lesson resolution: a free-text reference (a theme number, a
-// title fragment, or a subject the child names) → a concrete lesson, or a
-// clarification when it is absent or ambiguous. The LLM only extracts the
-// reference string (in classify); the mapping to a lesson is pure code — never
-// a guess. No "default lesson" (brief §6): the only silent resolution is the
-// single-unique-candidate case.
+// Lesson resolution maps a natural-language reference ("la leçon sur Napoléon",
+// "la 12", "celle sur les rois") to one of the known lessons. The matching is a
+// closed-set classification done by a cheap LLM over a catalogue injected from
+// the DB; the deterministic code keeps control of the consequence: the model can
+// only return a real lesson key or "none"/"ambiguous", never invent a lesson,
+// and there is no silent default (brief §6 — the single-lesson case aside).
 
-// The minimal lesson shape the resolver matches against. conceptLabels lets a
-// child name a lesson by its subject ("Napoléon") even when the title does not
-// contain that word.
 export type LessonRef = {
   id: string;
   title: string;
@@ -24,71 +23,34 @@ export type LessonResolution =
   | { kind: "resolved"; lessonId: string }
   // No lesson exists yet — orient toward adding one (ingest, a later step).
   | { kind: "empty" }
-  // A reference was given but matched nothing ("la 13" when only 11/12 exist).
+  // A named lesson we do not have ("la 13").
   | { kind: "not_found"; lessons: LessonRef[] }
-  // No reference, or a vague one, with several lessons in reach.
+  // No lesson named, or too vague to tell which.
   | { kind: "ambiguous"; lessons: LessonRef[] };
 
-const STOPWORDS = new Set([
-  "la", "le", "les", "un", "une", "des", "du", "de", "sur", "et", "ou", "ce",
-  "cette", "celle", "celui", "ceux", "lecon", "lecons", "theme", "themes",
-  "reviser", "revise", "fais", "moi", "ma", "mon", "mes", "veux", "pour",
-  "avec", "que", "qui", "quoi", "est", "dans",
-]);
+// The outcomes the model's choice can produce (empty is decided before the call).
+export type LessonChoice = Exclude<LessonResolution, { kind: "empty" }>;
 
-// Lowercase + strip diacritics, so "Napoléon" and "napoleon" match.
-function normalize(value: string): string {
-  return value
-    .toLowerCase()
-    .normalize("NFD")
-    .replace(/\p{Diacritic}/gu, "");
+// Stable per-call key for a catalogue entry — the model returns one of these,
+// not an opaque UUID.
+function lessonKey(index: number): string {
+  return `L${index + 1}`;
 }
 
-// A standalone 1–2 digit number in the reference is read as a theme number
-// (themes are 11, 12, …). A 4-digit year like "1870" is not a theme.
-function extractThemeNumber(reference: string): number | null {
-  const match = normalize(reference).match(/\b(\d{1,2})\b/);
-  return match ? Number(match[1]) : null;
-}
-
-// Lessons the reference plausibly designates. A theme number is an unambiguous
-// signal and is used exclusively when present; otherwise content tokens of the
-// reference are matched against the title and the concept labels.
-function matchLessons(reference: string, lessons: LessonRef[]): LessonRef[] {
-  const theme = extractThemeNumber(reference);
-  if (theme !== null) {
-    return lessons.filter((lesson) => lesson.theme === theme);
-  }
-  const tokens = normalize(reference)
-    .split(/[^a-z0-9]+/)
-    .filter((token) => token.length >= 3 && !STOPWORDS.has(token));
-  if (tokens.length === 0) {
-    return [];
-  }
-  return lessons.filter((lesson) => {
-    const haystack = normalize([lesson.title, ...lesson.conceptLabels].join(" "));
-    return tokens.some((token) => haystack.includes(token));
-  });
-}
-
-// The pure resolution decision. reference is null/empty when the child named no
-// lesson (then every lesson is a candidate, so a single-lesson base resolves and
-// a multi-lesson base asks).
-export function resolveLesson(
-  reference: string | null,
+// Maps the model's chosen key back to a resolution. Pure: an unknown or
+// out-of-range key is treated as ambiguous (ask, never guess).
+export function interpretChoice(
+  key: string,
   lessons: LessonRef[],
-): LessonResolution {
-  if (lessons.length === 0) {
-    return { kind: "empty" };
+): LessonChoice {
+  const match = /^L(\d+)$/.exec(key);
+  if (match) {
+    const lesson = lessons[Number(match[1]) - 1];
+    if (lesson) {
+      return { kind: "resolved", lessonId: lesson.id };
+    }
   }
-  const ref = reference?.trim() ?? "";
-  const candidates = ref === "" ? lessons : matchLessons(ref, lessons);
-
-  const [first] = candidates;
-  if (candidates.length === 1 && first) {
-    return { kind: "resolved", lessonId: first.id };
-  }
-  if (ref !== "" && candidates.length === 0) {
+  if (key === "none") {
     return { kind: "not_found", lessons };
   }
   return { kind: "ambiguous", lessons };
@@ -103,9 +65,9 @@ function lessonLine(lesson: LessonRef): string {
     : `- ${lesson.title}`;
 }
 
-// Deterministic clarification message — the lesson list is read from the DB,
-// the LLM never guesses it (brief §6). The lead-in differs between "I don't
-// have that one" and "which one do you want?".
+// Deterministic clarification — the lesson list is read from the DB, never
+// produced by the model. The lead-in differs between "I don't have that one"
+// and "which one do you want?".
 export function buildLessonClarification(
   resolution: { kind: "not_found" | "ambiguous"; lessons: LessonRef[] },
 ): string {
@@ -116,7 +78,7 @@ export function buildLessonClarification(
   return `Tu veux réviser quelle leçon ? Voici celles que je connais :\n${list}`;
 }
 
-// --- Imperative shell: the resolver node and its routing ----------------------
+// --- Imperative shell: the catalogue, the LLM pick, and the node --------------
 
 type LessonRow = Awaited<ReturnType<typeof getLessonsForResolution>>[number];
 
@@ -137,56 +99,99 @@ function toLessonRefs(rows: LessonRow[]): LessonRef[] {
   }));
 }
 
-function lastUserText(messages: BaseMessage[]): string | null {
-  for (let i = messages.length - 1; i >= 0; i -= 1) {
-    const message = messages[i];
-    if (message && message.getType() === "human") {
-      return typeof message.content === "string" ? message.content : null;
-    }
+function buildCatalogue(lessons: LessonRef[]): string {
+  return lessons
+    .map((lesson, index) => {
+      const theme = lesson.theme !== null ? ` (thème ${lesson.theme})` : "";
+      const subjects = lesson.conceptLabels.join(" ; ");
+      return `${lessonKey(index)} — ${lesson.title}${theme}. Sujets : ${subjects}`;
+    })
+    .join("\n");
+}
+
+function buildResolverSystem(catalogue: string): string {
+  return [
+    "Tu aides à identifier de quelle leçon d'histoire une élève de CM2 veut parler.",
+    "Voici les leçons disponibles :",
+    catalogue,
+    "",
+    "À partir de ses messages, choisis la clé de la leçon qu'elle désigne :",
+    "- une leçon clairement désignée (numéro de thème, titre, ou sujet abordé) → sa clé (ex. « L1 »).",
+    "- une leçon qu'elle nomme mais qui n'est pas dans la liste → « none ».",
+    "- aucune leçon désignée, ou trop vague pour trancher → « ambiguous ».",
+    "Ne devine jamais au hasard : dans le doute, « ambiguous ».",
+  ].join("\n");
+}
+
+// Closed-set LLM pick: a forced tool call whose schema is an enum of the real
+// lesson keys plus "none"/"ambiguous". Same bindTools pattern as classify, so it
+// stays internal under streamMode:messages. Malformed → ambiguous (ask).
+async function pickLesson(
+  messages: BaseMessage[],
+  lessons: LessonRef[],
+): Promise<string> {
+  const choices = [...lessons.map((_, i) => lessonKey(i)), "none", "ambiguous"];
+  const schema = z.object({
+    lessonKey: z
+      .enum(choices as [string, ...string[]])
+      .describe("La clé de la leçon désignée, ou « none » / « ambiguous »."),
+  });
+  const base = await getModel("classifier");
+  if (!base.bindTools) {
+    throw new Error("lesson resolver model does not support tool calling");
   }
-  return null;
+  const model = base.bindTools(
+    [
+      {
+        name: "choisir_lecon",
+        description: "Identifie la leçon que l'élève désigne.",
+        schema,
+      },
+    ],
+    { tool_choice: "choisir_lecon" },
+  );
+  const response = await model.invoke([
+    new SystemMessage(buildResolverSystem(buildCatalogue(lessons))),
+    ...messages,
+  ]);
+  const parsed = schema.safeParse(response.tool_calls?.[0]?.args);
+  return parsed.success ? parsed.data.lessonKey : "ambiguous";
 }
 
 export type LessonResolveState = {
   messages: BaseMessage[];
-  lessonHint: string | null;
-  lessonId: string | null;
-  pendingLessonChoice: boolean;
 };
 
-// On a pending-choice turn the router bypassed classify, so the raw answer
-// ("la 12") is the reference; otherwise use the hint classify extracted.
-function lessonReferenceFor(state: LessonResolveState): string | null {
-  return state.pendingLessonChoice
-    ? lastUserText(state.messages)
-    : state.lessonHint;
-}
-
-// Deterministic resolver node: resolve the lesson into state, or emit a
-// clarification / ingest-orientation message and arm pendingLessonChoice so the
-// next turn re-enters here with the student's answer (brief §6). lessonId is
-// cleared on every non-resolved outcome so a stale value can't leak through.
+// Resolver node: resolve the lesson into state, or emit a clarification /
+// ingest-orientation message and arm pendingLessonChoice so the next turn
+// re-enters here with the student's answer. A single lesson resolves without an
+// LLM call; lessonId is cleared on every non-resolved outcome.
 export async function resolveLessonNode(state: LessonResolveState) {
-  const reference = lessonReferenceFor(state);
   const lessons = toLessonRefs(await getLessonsForResolution());
-  const resolution = resolveLesson(reference, lessons);
-
-  switch (resolution.kind) {
-    case "resolved":
-      return { lessonId: resolution.lessonId, pendingLessonChoice: false };
-    case "empty":
-      return {
-        lessonId: null,
-        messages: [new AIMessage(EMPTY_BASE_MESSAGE)],
-        pendingLessonChoice: false,
-      };
-    default:
-      return {
-        lessonId: null,
-        messages: [new AIMessage(buildLessonClarification(resolution))],
-        pendingLessonChoice: true,
-      };
+  if (lessons.length === 0) {
+    return {
+      lessonId: null,
+      messages: [new AIMessage(EMPTY_BASE_MESSAGE)],
+      pendingLessonChoice: false,
+    };
   }
+  const [only] = lessons;
+  if (lessons.length === 1 && only) {
+    return { lessonId: only.id, pendingLessonChoice: false };
+  }
+
+  const resolution = interpretChoice(
+    await pickLesson(state.messages, lessons),
+    lessons,
+  );
+  if (resolution.kind === "resolved") {
+    return { lessonId: resolution.lessonId, pendingLessonChoice: false };
+  }
+  return {
+    lessonId: null,
+    messages: [new AIMessage(buildLessonClarification(resolution))],
+    pendingLessonChoice: true,
+  };
 }
 
 // A resolved lesson proceeds to the revise flow; every other outcome has already

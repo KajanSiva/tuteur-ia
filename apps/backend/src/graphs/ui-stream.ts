@@ -1,7 +1,7 @@
-// Nodes whose LLM output is structured plumbing (a tool_use carrying intent or
-// a mastery signal), never something the student should see. Their token chunks
-// must not reach the UI stream.
-const INTERNAL_NODES = new Set(["classify", "evaluate"]);
+// Nodes whose LLM output is structured plumbing (a tool_use carrying an intent,
+// a lesson choice, or a mastery signal), never something the student should see.
+// Their token chunks must not reach the UI stream.
+const INTERNAL_NODES = new Set(["classify", "evaluate", "resolveLesson"]);
 
 // Drops `["messages", [chunk, metadata]]` tuples emitted by internal nodes from
 // the graph's multi-mode stream, before it is handed to toUIMessageStream. Only

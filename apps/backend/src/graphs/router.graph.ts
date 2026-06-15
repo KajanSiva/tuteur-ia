@@ -71,10 +71,6 @@ export const RouterState = Annotation.Root({
     reducer: (_, next) => next,
     default: () => null,
   }),
-  lessonHint: Annotation<string | null>({
-    reducer: (_, next) => next,
-    default: () => null,
-  }),
   pendingLessonChoice: Annotation<boolean>({
     reducer: (_, next) => next,
     default: () => false,
@@ -87,8 +83,7 @@ Classe le DERNIER message de l'élève dans exactement une intention :
 - "ingest" : elle veut ajouter ou transmettre une nouvelle leçon.
 - "qa" : elle pose une question ponctuelle sur une leçon.
 - "out_of_scope" : message hors du cadre scolaire des leçons.
-Donne aussi une confidence entre 0 et 1.
-Si l'élève désigne une leçon (numéro de thème, titre, ou sujet comme « Napoléon » ou « l'école »), reporte-la dans lessonHint ; sinon mets lessonHint à null.`;
+Donne aussi une confidence entre 0 et 1.`;
 
 // We bind the schema as a forced tool and read the parsed tool-call args, rather
 // than withStructuredOutput. Two failure modes are avoided at once under the
@@ -119,13 +114,9 @@ async function classify(state: typeof RouterState.State) {
   // A malformed or missing classification routes to clarify (ask), never a guess.
   const parsed = IntentSchema.safeParse(response.tool_calls?.[0]?.args);
   if (!parsed.success) {
-    return { intent: null, confidence: 0, lessonHint: null };
+    return { intent: null, confidence: 0 };
   }
-  return {
-    intent: parsed.data.intent,
-    confidence: parsed.data.confidence,
-    lessonHint: parsed.data.lessonHint,
-  };
+  return { intent: parsed.data.intent, confidence: parsed.data.confidence };
 }
 
 function flowPlaceholder(flow: string) {

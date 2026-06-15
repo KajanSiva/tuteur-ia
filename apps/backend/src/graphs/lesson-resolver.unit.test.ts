@@ -2,18 +2,15 @@ import { describe, expect, it } from "vitest";
 
 import {
   buildLessonClarification,
+  interpretChoice,
   type LessonRef,
-  resolveLesson,
 } from "./lesson-resolver.js";
 
 const EMPIRE: LessonRef = {
   id: "lesson-11",
   title: "Du Premier Empire à la Troisième République",
   theme: 11,
-  conceptLabels: [
-    "La chute de Napoléon Ier et la défaite de Waterloo",
-    "Les symboles de la République",
-  ],
+  conceptLabels: ["La chute de Napoléon Ier et la défaite de Waterloo"],
 };
 
 const ECOLE: LessonRef = {
@@ -25,69 +22,34 @@ const ECOLE: LessonRef = {
 
 const LESSONS = [EMPIRE, ECOLE];
 
-describe("resolveLesson", () => {
-  it("orients to ingest when no lesson exists", () => {
-    expect(resolveLesson("Napoléon", [])).toEqual({ kind: "empty" });
-  });
-
-  it("resolves the only lesson even without a reference", () => {
-    expect(resolveLesson(null, [EMPIRE])).toEqual({
-      kind: "resolved",
-      lessonId: "lesson-11",
-    });
-  });
-
-  it("asks which one when no reference is given and several exist", () => {
-    expect(resolveLesson(null, LESSONS)).toEqual({
-      kind: "ambiguous",
-      lessons: LESSONS,
-    });
-  });
-
-  it("resolves by theme number", () => {
-    expect(resolveLesson("la 12", LESSONS)).toEqual({
+describe("interpretChoice", () => {
+  it("resolves a valid lesson key to its id", () => {
+    expect(interpretChoice("L2", LESSONS)).toEqual({
       kind: "resolved",
       lessonId: "lesson-12",
     });
   });
 
-  it("resolves by a title fragment, accent- and case-insensitively", () => {
-    expect(resolveLesson("premier EMPIRE", LESSONS)).toEqual({
-      kind: "resolved",
-      lessonId: "lesson-11",
-    });
-  });
-
-  it("resolves by a concept subject absent from the title", () => {
-    // "Napoléon" is in no title, only in a concept of the Empire lesson.
-    expect(resolveLesson("Napoléon", LESSONS)).toEqual({
-      kind: "resolved",
-      lessonId: "lesson-11",
-    });
-  });
-
-  it("does not read a 4-digit year as a theme number", () => {
-    // "1870" is not theme 18 or 70 — and matches no title/concept label here.
-    expect(resolveLesson("1870", LESSONS)).toEqual({
+  it("treats 'none' as a named-but-absent lesson", () => {
+    expect(interpretChoice("none", LESSONS)).toEqual({
       kind: "not_found",
       lessons: LESSONS,
     });
   });
 
-  it("reports not_found when a reference matches no lesson", () => {
-    expect(resolveLesson("la 13", LESSONS)).toEqual({
-      kind: "not_found",
+  it("treats 'ambiguous' as needing clarification", () => {
+    expect(interpretChoice("ambiguous", LESSONS)).toEqual({
+      kind: "ambiguous",
       lessons: LESSONS,
     });
   });
 
-  it("is ambiguous when a token matches several lessons", () => {
-    // "école" is in the title of one lesson and a concept of the other.
-    const both = resolveLesson("école", [
-      ECOLE,
-      { ...EMPIRE, conceptLabels: ["Aller à l'école sous l'Empire"] },
-    ]);
-    expect(both.kind).toBe("ambiguous");
+  it("falls back to ambiguous on an out-of-range key (never guesses)", () => {
+    expect(interpretChoice("L9", LESSONS).kind).toBe("ambiguous");
+  });
+
+  it("falls back to ambiguous on an unparseable key", () => {
+    expect(interpretChoice("garbage", LESSONS).kind).toBe("ambiguous");
   });
 });
 
