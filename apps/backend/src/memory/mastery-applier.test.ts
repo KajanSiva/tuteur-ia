@@ -162,6 +162,56 @@ describe("applyMasteryOps", () => {
     expect((await masteryRow(WATERLOO))?.level).toBe("secure");
   });
 
+  it("stamps the review touch and starts the ladder when a concept becomes secure", async () => {
+    const at = new Date("2026-06-15T10:00:00Z");
+    await applyMasteryOps({ ...META, reviewedAt: at }, [
+      { op: "update", conceptId: WATERLOO, level: "secure", reason: "résolu" },
+    ]);
+
+    const row = await masteryRow(WATERLOO);
+    expect(row?.level).toBe("secure");
+    expect(row?.reviewStep).toBe(0);
+    expect(row?.lastReviewedAt).toEqual(at);
+  });
+
+  it("climbs the ladder on a confirming re-review, decoupled from the audit history", async () => {
+    const t1 = new Date("2026-06-15T10:00:00Z");
+    const t2 = new Date("2026-06-17T10:00:00Z");
+    await applyMasteryOps({ ...META, reviewedAt: t1 }, [
+      { op: "update", conceptId: WATERLOO, level: "secure", reason: "1er passage" },
+    ]);
+    // Same level again → a NOOP for the state policy, but a real review touch.
+    const result = await applyMasteryOps({ ...META, reviewedAt: t2 }, [
+      { op: "update", conceptId: WATERLOO, level: "secure", reason: "confirmé" },
+    ]);
+
+    expect(result[0]).toMatchObject({ applied: "noop" });
+    const row = await masteryRow(WATERLOO);
+    expect(row?.reviewStep).toBe(1); // interval grows
+    expect(row?.lastReviewedAt).toEqual(t2); // re-stamped
+    // The unchanged state writes no history — the touch is not an audit event.
+    expect(await history(WATERLOO)).toHaveLength(1);
+  });
+
+  it("resets the ladder when the concept drops below secure", async () => {
+    const t1 = new Date("2026-06-15T10:00:00Z");
+    const t2 = new Date("2026-06-17T10:00:00Z");
+    const t3 = new Date("2026-06-20T10:00:00Z");
+    await applyMasteryOps({ ...META, reviewedAt: t1 }, [
+      { op: "update", conceptId: WATERLOO, level: "secure", reason: "a" },
+    ]);
+    await applyMasteryOps({ ...META, reviewedAt: t2 }, [
+      { op: "update", conceptId: WATERLOO, level: "secure", reason: "b" },
+    ]);
+    await applyMasteryOps({ ...META, reviewedAt: t3 }, [
+      { op: "update", conceptId: WATERLOO, level: "developing", reason: "oubli" },
+    ]);
+
+    const row = await masteryRow(WATERLOO);
+    expect(row?.level).toBe("developing");
+    expect(row?.reviewStep).toBe(0);
+  });
+
   it("keeps versions monotonic across delete and re-add", async () => {
     await applyMasteryOps(META, [
       { op: "add", conceptId: WATERLOO, level: "emerging", reason: "v1" },

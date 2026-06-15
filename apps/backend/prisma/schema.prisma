@@ -82,13 +82,18 @@ model Concept {
 model Mastery {
   studentId  String       @map("student_id") @db.Uuid
   conceptId  String       @map("concept_id") @db.Uuid
-  level      MasteryLevel
-  rationale  String?
-  isLocked   Boolean      @default(false) @map("is_locked")
-  version    Int          @default(1)
-  changedBy  String       @map("changed_by")
-  runId      String?      @map("run_id")
-  validFrom  DateTime     @default(now()) @map("valid_from")
+  level         MasteryLevel
+  rationale     String?
+  isLocked      Boolean      @default(false) @map("is_locked")
+  version       Int          @default(1)
+  changedBy     String       @map("changed_by")
+  runId         String?      @map("run_id")
+  validFrom     DateTime     @default(now()) @map("valid_from")
+  // Spaced-repetition bookkeeping (derived dueness, no stored next_due).
+  // last_reviewed_at is stamped on every revision touch (even a NOOP state
+  // change); review_step is the Leitner ladder index for secure concepts.
+  lastReviewedAt DateTime?   @map("last_reviewed_at")
+  reviewStep     Int         @default(0) @map("review_step")
 
   student Student @relation(fields: [studentId], references: [id], onDelete: Cascade)
   concept Concept @relation(fields: [conceptId], references: [id], onDelete: Cascade)

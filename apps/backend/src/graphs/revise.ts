@@ -324,7 +324,12 @@ export async function advanceNode(
         ? config.configurable.thread_id
         : null;
     await applyMasteryOps(
-      { studentId: state.studentId, changedBy: REVISE_CHANGED_BY, runId },
+      {
+        studentId: state.studentId,
+        changedBy: REVISE_CHANGED_BY,
+        runId,
+        reviewedAt: new Date(),
+      },
       [masterySignalToOp(state.masterySignal, concept.id)],
     );
     if (state.sessionTraceId) {

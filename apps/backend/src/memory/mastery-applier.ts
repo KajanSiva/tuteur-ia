@@ -1,12 +1,40 @@
 import { prisma } from "../db/client.js";
+import type { MasteryLevel } from "../generated/prisma/enums.js";
 import { decideMasteryAction, type MasteryState } from "./mastery-policy.js";
 import type { MasteryOp } from "./ops.js";
+import { nextReviewStep, secureIntervalsDays } from "./srs.js";
 
 export type ApplyMeta = {
   studentId: string;
   changedBy: string;
   runId?: string | null;
+  // Set on a revision resolution: also stamp the spaced-repetition touch
+  // (last_reviewed_at + review_step), decoupled from the state-change policy —
+  // it fires even on a NOOP "no change" and writes no history row.
+  reviewedAt?: Date | null;
 };
+
+// The SRS bookkeeping written alongside (or instead of) a state change when the
+// concept was just reviewed. Empty when this is not a revision touch.
+function reviewTouch(
+  meta: ApplyMeta,
+  prevLevel: MasteryLevel | null,
+  newLevel: MasteryLevel,
+  prevStep: number,
+): { lastReviewedAt: Date; reviewStep: number } | Record<string, never> {
+  if (!meta.reviewedAt) {
+    return {};
+  }
+  return {
+    lastReviewedAt: meta.reviewedAt,
+    reviewStep: nextReviewStep(
+      prevLevel,
+      newLevel,
+      prevStep,
+      secureIntervalsDays().length,
+    ),
+  };
+}
 
 export type MasteryOpResult = {
   conceptId: string;
@@ -54,8 +82,17 @@ async function applyOne(
     : null;
 
   const action = decideMasteryAction(currentState, op);
+  const prevStep = current?.reviewStep ?? 0;
 
   if (action.kind === "noop") {
+    // No state change, but a revision still happened: stamp the SRS touch
+    // (the secure ladder climbs even when the level is unchanged). No history.
+    if (meta.reviewedAt && current) {
+      await tx.mastery.update({
+        where: { studentId_conceptId: { studentId, conceptId: op.conceptId } },
+        data: reviewTouch(meta, current.level, current.level, prevStep),
+      });
+    }
     return { conceptId: op.conceptId, applied: "noop", reason: action.reason };
   }
 
@@ -88,6 +125,12 @@ async function applyOne(
 
   const isLocked = current?.isLocked ?? false;
   const memoryOp = action.kind === "insert" ? "add" : "update";
+  const touch = reviewTouch(
+    meta,
+    current?.level ?? null,
+    action.values.level,
+    prevStep,
+  );
 
   await tx.mastery.upsert({
     where: { studentId_conceptId: { studentId, conceptId: op.conceptId } },
@@ -95,6 +138,7 @@ async function applyOne(
       studentId,
       conceptId: op.conceptId,
       ...action.values,
+      ...touch,
       isLocked,
       version,
       changedBy,
@@ -102,6 +146,7 @@ async function applyOne(
     },
     update: {
       ...action.values,
+      ...touch,
       version,
       changedBy,
       runId,
