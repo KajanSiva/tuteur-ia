@@ -14,7 +14,7 @@ export async function* withoutInternalNodes<T>(
 ): AsyncGenerator<T> {
   for await (const chunk of stream) {
     if (Array.isArray(chunk) && chunk[0] === "messages") {
-      const payload = chunk[1];
+      const payload: unknown = chunk[1];
       const metadata = Array.isArray(payload)
         ? (payload[1] as { langgraph_node?: string } | undefined)
         : undefined;

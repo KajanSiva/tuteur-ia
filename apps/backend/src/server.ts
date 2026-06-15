@@ -1,7 +1,6 @@
 import { randomUUID } from "node:crypto";
 import "dotenv/config";
 import { Readable } from "node:stream";
-import type { ReadableStream as NodeReadableStream } from "node:stream/web";
 
 import { toBaseMessages, toUIMessageStream } from "@ai-sdk/langchain";
 import cors from "@fastify/cors";
@@ -111,9 +110,7 @@ app.post("/api/chat", async (request, reply) => {
 
   reply.code(response.status);
   response.headers.forEach((value, key) => reply.header(key, value));
-  // The web ReadableStream and node:stream/web's are structurally identical but
-  // nominally distinct under our lib config; bridge the gap for Readable.fromWeb.
-  return Readable.fromWeb(response.body as unknown as NodeReadableStream);
+  return Readable.fromWeb(response.body);
 });
 
 const port = Number(process.env.PORT ?? 3001);

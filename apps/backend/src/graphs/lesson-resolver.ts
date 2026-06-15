@@ -84,7 +84,7 @@ type LessonRow = Awaited<ReturnType<typeof getLessonsForResolution>>[number];
 
 function themeOf(metadata: unknown): number | null {
   if (metadata && typeof metadata === "object" && "theme" in metadata) {
-    const value = (metadata as { theme: unknown }).theme;
+    const value: unknown = metadata.theme;
     return typeof value === "number" ? value : null;
   }
   return null;
