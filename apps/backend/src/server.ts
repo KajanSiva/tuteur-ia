@@ -18,6 +18,11 @@ import { createCheckpointer } from "./checkpoint/index.js";
 import type { RoutingPhase } from "./graphs/phase.js";
 import { buildRouterGraph, type RouterState } from "./graphs/router.graph.js";
 import { withoutInternalNodes } from "./graphs/ui-stream.js";
+import {
+  createTraceHandler,
+  flushObservability,
+  startObservability,
+} from "./observability/langfuse.js";
 
 // Lesson photos arrive inline as base64 file parts; the client downscales them,
 // but a multi-page lesson still needs headroom over Fastify's 1 MB default.
@@ -27,6 +32,11 @@ const app = Fastify({ logger: true, bodyLimit: BODY_LIMIT_BYTES });
 
 // Permissive CORS for local dev (Vite frontend on a different port).
 await app.register(cors, { origin: true });
+
+// Start OpenTelemetry → Langfuse before serving (no-op without keys).
+if (startObservability()) {
+  app.log.info("langfuse observability enabled");
+}
 
 const router = buildRouterGraph(await createCheckpointer());
 
@@ -102,76 +112,86 @@ app.post("/api/chat", async (request, reply) => {
       >[0])
     : input;
 
+  // One Langfuse trace per turn; sessionId = thread_id ties a séance together.
+  // Passed via callbacks, it traces every node and model call underneath.
+  const traceHandler = createTraceHandler(threadId);
+
   const stream = createUIMessageStream({
     onError: (error) => {
       app.log.error({ err: error }, "ui stream execute failed");
       return "An error occurred.";
     },
     execute: async ({ writer }) => {
-      const graphStream = await router.stream(graphInput, {
-        // "custom" carries non-prose data parts (progress, …) emitted by nodes
-        // via config.writer; the adapter maps them to `data-*` UI parts.
-        streamMode: ["messages", "values", "custom"],
-        ...config,
-      });
-
-      // The socratic node streams its tokens (surfaced here as text parts);
-      // deterministic nodes emit a static message the adapter does not surface,
-      // so we fall back to writing their final text once the stream is drained.
-      // Strip internal nodes (classify, evaluate) from the stream so their
-      // tool_use never surfaces as UI parts. An async generator satisfies
-      // toUIMessageStream's AsyncIterable input; cast to its parameter type.
-      const filtered = withoutInternalNodes(graphStream) as Parameters<
-        typeof toUIMessageStream<typeof RouterState.State>
-      >[0];
-      let finalState: typeof RouterState.State | undefined;
-      const ui = toUIMessageStream<typeof RouterState.State>(filtered, {
-        onFinish: (state) => {
-          finalState = state ?? undefined;
-        },
-      });
-
-      const reader = ui.getReader();
-      let streamedText = false;
-      for (;;) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        if (value.type === "text-delta") streamedText = true;
-        writer.write(value);
-      }
-
-      if (!streamedText && finalState) {
-        // On an interrupt the paused state carries no messages array — guard it.
-        const last = finalState.messages?.at(-1);
-        const replyText =
-          last && typeof last.content === "string" ? last.content : "";
-        if (replyText) {
-          const id = randomUUID();
-          writer.write({ type: "text-start", id });
-          writer.write({ type: "text-delta", id, delta: replyText });
-          writer.write({ type: "text-end", id });
-        }
-      }
-
-      // If the graph paused on a HIL interrupt, surface its payload as a
-      // data-confirm part (the back↔front contract): the front renders the
-      // matching card and disables input until the choice resumes the graph.
-      const after = await router.getState(config);
-      const pending = (after.tasks ?? []).flatMap(
-        (task) => task.interrupts ?? [],
-      );
-      const confirm: unknown = pending[0]?.value;
-      if (
-        confirm &&
-        typeof confirm === "object" &&
-        "kind" in confirm &&
-        confirm.kind === "confirm_overwrite"
-      ) {
-        writer.write({
-          type: "data-confirm",
-          id: "confirm-overwrite",
-          data: confirm,
+      try {
+        const graphStream = await router.stream(graphInput, {
+          // "custom" carries non-prose data parts (progress, …) emitted by nodes
+          // via config.writer; the adapter maps them to `data-*` UI parts.
+          streamMode: ["messages", "values", "custom"],
+          ...config,
+          ...(traceHandler ? { callbacks: [traceHandler] } : {}),
         });
+
+        // The socratic node streams its tokens (surfaced here as text parts);
+        // deterministic nodes emit a static message the adapter does not
+        // surface, so we fall back to writing their final text once the stream
+        // is drained. Strip internal nodes (classify, evaluate) from the stream
+        // so their tool_use never surfaces as UI parts. An async generator
+        // satisfies toUIMessageStream's AsyncIterable input; cast to its type.
+        const filtered = withoutInternalNodes(graphStream) as Parameters<
+          typeof toUIMessageStream<typeof RouterState.State>
+        >[0];
+        let finalState: typeof RouterState.State | undefined;
+        const ui = toUIMessageStream<typeof RouterState.State>(filtered, {
+          onFinish: (state) => {
+            finalState = state ?? undefined;
+          },
+        });
+
+        const reader = ui.getReader();
+        let streamedText = false;
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          if (value.type === "text-delta") streamedText = true;
+          writer.write(value);
+        }
+
+        if (!streamedText && finalState) {
+          // On an interrupt the paused state carries no messages — guard it.
+          const last = finalState.messages?.at(-1);
+          const replyText =
+            last && typeof last.content === "string" ? last.content : "";
+          if (replyText) {
+            const id = randomUUID();
+            writer.write({ type: "text-start", id });
+            writer.write({ type: "text-delta", id, delta: replyText });
+            writer.write({ type: "text-end", id });
+          }
+        }
+
+        // If the graph paused on a HIL interrupt, surface its payload as a
+        // data-confirm part (the back↔front contract): the front renders the
+        // matching card and disables input until the choice resumes the graph.
+        const after = await router.getState(config);
+        const pending = (after.tasks ?? []).flatMap(
+          (task) => task.interrupts ?? [],
+        );
+        const confirm: unknown = pending[0]?.value;
+        if (
+          confirm &&
+          typeof confirm === "object" &&
+          "kind" in confirm &&
+          confirm.kind === "confirm_overwrite"
+        ) {
+          writer.write({
+            type: "data-confirm",
+            id: "confirm-overwrite",
+            data: confirm,
+          });
+        }
+      } finally {
+        // Flush this turn's spans to Langfuse (no-op when disabled).
+        await flushObservability();
       }
     },
   });
