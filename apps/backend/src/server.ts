@@ -17,7 +17,11 @@ import { createCheckpointer } from "./checkpoint/index.js";
 import { buildRouterGraph, type RouterState } from "./graphs/router.graph.js";
 import { withoutInternalNodes } from "./graphs/ui-stream.js";
 
-const app = Fastify({ logger: true });
+// Lesson photos arrive inline as base64 file parts; the client downscales them,
+// but a multi-page lesson still needs headroom over Fastify's 1 MB default.
+const BODY_LIMIT_BYTES = 25 * 1024 * 1024;
+
+const app = Fastify({ logger: true, bodyLimit: BODY_LIMIT_BYTES });
 
 // Permissive CORS for local dev (Vite frontend on a different port).
 await app.register(cors, { origin: true });

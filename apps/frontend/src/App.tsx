@@ -16,13 +16,47 @@ const transport = new DefaultChatTransport<TutorUIMessage>({ api: "/api/chat" })
 // router toward the ingest intent rather than leaving the image unlabelled.
 const DEFAULT_INGEST_TEXT = "Voici une nouvelle leçon, peux-tu la prendre en compte ?";
 
-function fileToDataUrl(file: File): Promise<string> {
+// Longest edge a lesson photo is scaled down to before upload. Matches the
+// vision API's recommended max so we send the smallest image that stays legible
+// — keeping payloads small (well under the body limit) and vision tokens cheap.
+const MAX_IMAGE_EDGE = 1568;
+const JPEG_QUALITY = 0.85;
+
+function loadImage(file: File): Promise<HTMLImageElement> {
   return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(reader.result as string);
-    reader.onerror = () => reject(reader.error);
-    reader.readAsDataURL(file);
+    const url = URL.createObjectURL(file);
+    const image = new Image();
+    image.onload = () => {
+      URL.revokeObjectURL(url);
+      resolve(image);
+    };
+    image.onerror = () => {
+      URL.revokeObjectURL(url);
+      reject(new Error(`could not load image ${file.name}`));
+    };
+    image.src = url;
   });
+}
+
+// Downscales a lesson photo to a JPEG data URL bounded by MAX_IMAGE_EDGE. Returns
+// a file part ready for sendMessage.
+async function downscaleToFilePart(file: File) {
+  const image = await loadImage(file);
+  const scale = Math.min(1, MAX_IMAGE_EDGE / Math.max(image.width, image.height));
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.round(image.width * scale);
+  canvas.height = Math.round(image.height * scale);
+  const ctx = canvas.getContext("2d");
+  if (!ctx) {
+    throw new Error("could not get a 2d canvas context");
+  }
+  ctx.drawImage(image, 0, 0, canvas.width, canvas.height);
+  return {
+    type: "file" as const,
+    mediaType: "image/jpeg",
+    filename: file.name.replace(/\.[^.]+$/, "") + ".jpg",
+    url: canvas.toDataURL("image/jpeg", JPEG_QUALITY),
+  };
 }
 
 export default function App() {
@@ -52,14 +86,7 @@ export default function App() {
     if ((!typed && images.length === 0) || busy) return;
 
     const text = typed || DEFAULT_INGEST_TEXT;
-    const files = await Promise.all(
-      images.map(async (file) => ({
-        type: "file" as const,
-        mediaType: file.type,
-        filename: file.name,
-        url: await fileToDataUrl(file),
-      })),
-    );
+    const files = await Promise.all(images.map(downscaleToFilePart));
 
     setInput("");
     setImages([]);
