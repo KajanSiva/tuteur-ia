@@ -17,6 +17,7 @@ import {
 import { applyMasteryOps } from "../memory/mastery-applier.js";
 import type { MasteryOp } from "../memory/ops.js";
 import { isSecureDue, secureIntervalsDays } from "../memory/srs.js";
+import type { RoutingPhase } from "./phase.js";
 import {
   appendSessionTraceEntry,
   endSessionTrace,
@@ -54,12 +55,9 @@ export type ReviseState = {
   sessionConceptIds: string[] | null;
   conceptCursor: number;
   turnsOnConcept: number;
-  reviseActive: boolean;
+  phase: RoutingPhase;
   masterySignal: MasterySignal | null;
   sessionTraceId: string | null;
-  // Set by a "revise this lesson" chip command: enter revise directly on this
-  // lesson, bypassing classify and the resolver. Consumed and cleared by hydrate.
-  enterReviseLessonId: string | null;
 };
 
 // Provenance tag stamped on every mastery row this flow writes.
@@ -221,34 +219,30 @@ export async function hydrateNode(
     sessionConceptIds: selected.map((c) => c.id),
     conceptCursor: 0,
     turnsOnConcept: 0,
-    reviseActive: true,
+    phase: "revising",
     masterySignal: null,
     sessionTraceId,
-    enterReviseLessonId: null,
   };
 }
 
-// Entry guard at START: while a revise flow is active, the turn bypasses
-// classify and goes straight to evaluate (treat the message as the student's
-// answer). Without it, a short answer like "1789" would be re-classified as a
-// new intent every turn (brief §5.1).
+// Entry dispatch at START: the single switch on the routing phase. While a
+// revise flow is active the turn bypasses classify and goes straight to evaluate
+// (a short answer like "1789" must not be re-classified as a new intent each
+// turn, brief §5.1); a pending lesson choice or a chip-driven entry likewise
+// skip classify. Idle classifies. Exhaustive over RoutingPhase.
 export function routeStart(state: {
-  reviseActive?: boolean;
-  pendingLessonChoice?: boolean;
-  enterReviseLessonId?: string | null;
+  phase: RoutingPhase;
 }): "classify" | "evaluate" | "resolveLesson" | "revise" {
-  if (state.reviseActive) {
-    return "evaluate";
+  switch (state.phase) {
+    case "revising":
+      return "evaluate";
+    case "entering_revise":
+      return "revise";
+    case "choosing_lesson":
+      return "resolveLesson";
+    case "idle":
+      return "classify";
   }
-  // A chip dropped us straight into revise on a known lesson (no classify, no
-  // resolver). Checked after reviseActive so a stale value can't loop a session.
-  if (state.enterReviseLessonId) {
-    return "revise";
-  }
-  if (state.pendingLessonChoice) {
-    return "resolveLesson";
-  }
-  return "classify";
 }
 
 // Routes out of hydrate: nothing selected (everything already secure) goes
@@ -392,7 +386,7 @@ export async function finishNode(
         `Bravo ${bundle.student.displayName}, on a fait le tour pour aujourd'hui ! Tu peux revenir réviser quand tu veux. 😊`,
       ),
     ],
-    reviseActive: false,
+    phase: "idle",
     sessionConceptIds: null,
     conceptCursor: 0,
     turnsOnConcept: 0,

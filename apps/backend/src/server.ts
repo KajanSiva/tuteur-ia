@@ -14,6 +14,7 @@ import Fastify from "fastify";
 import { z } from "zod";
 
 import { createCheckpointer } from "./checkpoint/index.js";
+import type { RoutingPhase } from "./graphs/phase.js";
 import { buildRouterGraph, type RouterState } from "./graphs/router.graph.js";
 import { withoutInternalNodes } from "./graphs/ui-stream.js";
 
@@ -73,11 +74,11 @@ app.post("/api/chat", async (request, reply) => {
   const input: {
     messages: typeof messages;
     lessonId?: string;
-    enterReviseLessonId?: string;
+    phase?: RoutingPhase;
   } = { messages };
   if (command?.kind === "revise_lesson") {
     input.lessonId = command.lessonId;
-    input.enterReviseLessonId = command.lessonId;
+    input.phase = "entering_revise";
   }
 
   const stream = createUIMessageStream({

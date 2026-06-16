@@ -25,10 +25,9 @@ function reviseState(over: Partial<ReviseState> = {}): ReviseState {
     sessionConceptIds: ["c1", "c2"],
     conceptCursor: 0,
     turnsOnConcept: 0,
-    reviseActive: true,
+    phase: "revising",
     masterySignal: null,
     sessionTraceId: "trace-1",
-    enterReviseLessonId: null,
     ...over,
   };
 }
@@ -148,33 +147,22 @@ describe("buildSocraticSystem", () => {
 });
 
 describe("routeStart", () => {
-  it("skips classify and goes to evaluate while a revise flow is active", () => {
-    expect(routeStart({ reviseActive: true })).toBe("evaluate");
+  // One phase → one destination. Phases are mutually exclusive, so the old
+  // "which flag wins" precedence checks are gone by construction.
+  it("sends an active revise session straight to evaluate, skipping classify", () => {
+    expect(routeStart({ phase: "revising" })).toBe("evaluate");
   });
 
   it("routes a pending lesson answer back to the resolver, skipping classify", () => {
-    expect(routeStart({ pendingLessonChoice: true })).toBe("resolveLesson");
-  });
-
-  it("lets an active session take precedence over a pending lesson choice", () => {
-    expect(routeStart({ reviseActive: true, pendingLessonChoice: true })).toBe(
-      "evaluate",
-    );
+    expect(routeStart({ phase: "choosing_lesson" })).toBe("resolveLesson");
   });
 
   it("enters revise directly when a chip command set the lesson", () => {
-    expect(routeStart({ enterReviseLessonId: "lesson-1" })).toBe("revise");
+    expect(routeStart({ phase: "entering_revise" })).toBe("revise");
   });
 
-  it("lets an active session take precedence over a stale chip entry", () => {
-    expect(
-      routeStart({ reviseActive: true, enterReviseLessonId: "lesson-1" }),
-    ).toBe("evaluate");
-  });
-
-  it("routes to classify when no flow is active", () => {
-    expect(routeStart({ reviseActive: false })).toBe("classify");
-    expect(routeStart({})).toBe("classify");
+  it("classifies when idle", () => {
+    expect(routeStart({ phase: "idle" })).toBe("classify");
   });
 });
 

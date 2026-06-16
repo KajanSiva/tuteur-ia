@@ -163,21 +163,22 @@ export type LessonResolveState = {
 };
 
 // Resolver node: resolve the lesson into state, or emit a clarification /
-// ingest-orientation message and arm pendingLessonChoice so the next turn
+// ingest-orientation message and set phase "choosing_lesson" so the next turn
 // re-enters here with the student's answer. A single lesson resolves without an
-// LLM call; lessonId is cleared on every non-resolved outcome.
+// LLM call; lessonId is cleared on every non-resolved outcome. On a resolved
+// outcome the phase is cleared to idle (hydrate sets "revising" in the same run).
 export async function resolveLessonNode(state: LessonResolveState) {
   const lessons = toLessonRefs(await getLessonsForResolution());
   if (lessons.length === 0) {
     return {
       lessonId: null,
       messages: [new AIMessage(EMPTY_BASE_MESSAGE)],
-      pendingLessonChoice: false,
+      phase: "idle" as const,
     };
   }
   const [only] = lessons;
   if (lessons.length === 1 && only) {
-    return { lessonId: only.id, pendingLessonChoice: false };
+    return { lessonId: only.id, phase: "idle" as const };
   }
 
   const resolution = interpretChoice(
@@ -185,12 +186,12 @@ export async function resolveLessonNode(state: LessonResolveState) {
     lessons,
   );
   if (resolution.kind === "resolved") {
-    return { lessonId: resolution.lessonId, pendingLessonChoice: false };
+    return { lessonId: resolution.lessonId, phase: "idle" as const };
   }
   return {
     lessonId: null,
     messages: [new AIMessage(buildLessonClarification(resolution))],
-    pendingLessonChoice: true,
+    phase: "choosing_lesson" as const,
   };
 }
 

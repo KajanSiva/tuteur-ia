@@ -39,7 +39,7 @@ describe("withoutInternalNodes", () => {
   });
 
   it("passes non-message tuples (values) through untouched", async () => {
-    const values = ["values", { messages: [], reviseActive: true }];
+    const values = ["values", { messages: [], phase: "revising" }];
     const result = await collect(
       withoutInternalNodes(
         (async function* () {

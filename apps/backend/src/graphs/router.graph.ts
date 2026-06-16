@@ -19,6 +19,7 @@ import {
 } from "./ingest.js";
 import { IntentSchema, routeOnIntent } from "./intent.js";
 import { afterResolveLesson, resolveLessonNode } from "./lesson-resolver.js";
+import type { RoutingPhase } from "./phase.js";
 import {
   advanceNode,
   afterHydrate,
@@ -66,9 +67,11 @@ export const RouterState = Annotation.Root({
     reducer: (_, next) => next,
     default: () => 0,
   }),
-  reviseActive: Annotation<boolean>({
+  // The single routing discriminant read at START (replaces the old
+  // reviseActive / pendingLessonChoice / enterReviseLessonId booleans).
+  phase: Annotation<RoutingPhase>({
     reducer: (_, next) => next,
-    default: () => false,
+    default: () => "idle",
   }),
   masterySignal: Annotation<MasterySignal | null>({
     reducer: (_, next) => next,
@@ -78,19 +81,11 @@ export const RouterState = Annotation.Root({
     reducer: (_, next) => next,
     default: () => null,
   }),
-  pendingLessonChoice: Annotation<boolean>({
-    reducer: (_, next) => next,
-    default: () => false,
-  }),
   pendingIngestion: Annotation<ExtractedLesson | null>({
     reducer: (_, next) => next,
     default: () => null,
   }),
   ingestedLessonId: Annotation<string | null>({
-    reducer: (_, next) => next,
-    default: () => null,
-  }),
-  enterReviseLessonId: Annotation<string | null>({
     reducer: (_, next) => next,
     default: () => null,
   }),
@@ -157,13 +152,14 @@ async function clarify() {
   };
 }
 
-// Router workflow with the revise state machine. A START guard skips classify
-// while a revise flow is active (the turn is the student's answer → evaluate).
-// Otherwise classify (the only router LLM call) routes by intent. The revise
-// loop is run-to-END + re-invoke per message: one POST = one dialogue turn.
-//   START ─ active? ─ yes → evaluate ─ decide ─ advance ─ decide ─ socratic/finish
-//          ├ pendingLessonChoice → resolveLesson (the student's lesson answer)
-//          └ no → classify → { revise → resolveLesson | ingest | … }
+// Router workflow with the revise state machine. routeStart switches on the
+// single routing phase, skipping classify when a flow is in progress. classify
+// (the only router LLM call) routes by intent. The revise loop is run-to-END +
+// re-invoke per message: one POST = one dialogue turn.
+//   START ─ phase ─ revising        → evaluate ─ decide ─ advance ─ socratic/finish
+//          ├ choosing_lesson → resolveLesson (the student's lesson answer)
+//          ├ entering_revise → revise (a chip set the lesson)
+//          └ idle           → classify → { revise → resolveLesson | ingest | … }
 // resolveLesson maps the lesson hint to a lesson (→ revise/hydrate) or asks which
 // one. ingest parses lesson images (vision), persists a draft, and streams a
 // recap. out_of_scope and clarify are final behaviour.
