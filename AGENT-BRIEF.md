@@ -222,9 +222,9 @@ La qualité du tuteur dépend surtout de **ce qu'on injecte dans le nœud socrat
 
 **Pattern canonique : "router workflow over intent subgraphs"** (déterministe), *pas* le "supervisor" LLM-orchestré. Réfs : LangGraph *Thinking in LangGraph*, *use-subgraphs*, *graph-api*, *interrupts*, *persistence* ; LangChain *How to think about agent frameworks*.
 
-### 5.0 MVP = 3 intents + un garde-fou
-Enum **fermé** d'intents : `["ingest", "revise", "qa", "out_of_scope"]`.
-- **`out_of_scope` dès le début** (quasi gratuit, structurel) : un nœud renvoie une redirection fixe ("je t'aide à réviser tes leçons, on reprend ?"). C'est la muraille anti-ChatGPT-générique.
+### 5.0 MVP = intents + un garde-fou
+Enum **fermé** d'intents : `["ingest", "revise", "out_of_scope"]`. *(⚠️ `qa` **retiré de l'enum à l'étape 3**, décision 16/06 — voir §17. `out_of_scope` absorbe désormais les questions hors leçon.)*
+- **`out_of_scope` dès le début** (quasi gratuit, structurel) : un nœud renvoie une redirection fixe ("je t'aide à réviser tes leçons, on reprend ?"). C'est la muraille anti-ChatGPT-générique — et le réceptacle des questions diverses tant qu'aucun flow `qa` cadré n'existe.
 - Intent **curiosité ouverte cadrée leçon** = différé (itération future).
 
 ### 5.1 Router (graphe parent)
@@ -289,8 +289,10 @@ BOUCLE EXTERNE DÉTERMINISTE sur les concepts de la leçon :
 >
 > **Temporalité — comment un concept “acquis” redevient à réviser (décision 13/06, post-cœur, profondeur = récence + intervalle par niveau).** Il n'y a **aucun statut “périmé” stocké, aucun cron** : l'éligibilité est **dérivée à la lecture** (au moment de bâtir la séance), exactement comme « inconnu = absence de ligne ». Un concept secure est périmé si `now() − last_reviewed_at ≥ intervalle(level)` (intervalle par niveau : un secure se revoit moins souvent qu'un developing). **Un statut matérialisé serait faux entre deux runs** (il dépend de l'horloge) → on compare toujours à `now()` à la sélection. La seule donnée **écrite** est `mastery.last_reviewed_at` (**nouvelle colonne**), **bumpée à chaque révision aboutie même si le niveau ne change pas** — découplé du `NOOP` “no change” de la policy d'état ([mastery-policy.ts](apps/backend/src/memory/mastery-policy.ts)), qui garde l'history d'audit propre (deux préoccupations : *changement d'état* vs *touche de révision*). `next_due` reste **dérivé** (`last_reviewed_at + intervalle(level)`), pas stocké. ⚠️ C'est une **extension** de la mémoire, justifiée par le brief (§4 : on étend quand un consommateur réel le réclame — ici la sélection) ; pas du SM-2 complet (pas d'ease factor), la colonne laisse la place d'y aller plus tard. **→ Implémenté en 2.7 (décision 15/06) comme un système de Leitner** : au lieu d'un intervalle fixe par niveau, une **échelle de paliers croissants** `[1,2,4,8]` jours (env-configurable) indexée par une 2e colonne `mastery.review_step` ; une ré-révision d'un concept resté `secure` **grimpe d'un cran** (intervalle suivant plus long), retomber sous secure remet à 0. `emerging`/`developing` ne sont **pas** espacés (toujours éligibles). Détail en §16 (2.7).
 
-### 5.4 Sous-graphe `qa` — léger
-Q&A cadrée sur une leçon (notions importantes, niveau de maîtrise). Essentiellement un appel LLM sur leçon + mémoire (le "niveau de maîtrise" est même une simple lecture de `mastery`). Pas la boucle lourde du socratique.
+### 5.4 Sous-graphe `qa` — ~~léger~~ **RETIRÉ (décision 16/06, §17)**
+> ⚠️ **`qa` a été retiré entièrement à l'étape 3** (enum compris). Le scope « Q&A cadrée sur une leçon » glissait vers « questions diverses à tout moment », ce qui recoupe l'intent *curiosité ouverte* explicitement différé (§14) et menaçait la muraille `out_of_scope`. Les questions diverses tombent sur `out_of_scope` pour l'instant. Un flow `qa` ancré sur le corpus pourra revenir plus tard avec un scope mûr.
+>
+> *(Conception d'origine, conservée pour mémoire : Q&A cadrée sur une leçon — un appel LLM sur leçon + lecture `mastery`, sans la boucle socratique.)*
 
 ### 5.5 HIL — gate dur (réservé), modalité 2 étages
 Quand (et seulement quand) une action est dangereuse/irréversible (ex : overwrite d'une leçon existante) :
@@ -411,7 +413,7 @@ Méthode : **d'abord produire du structuré** (feuille Q/R + signaux de maîtris
 0. ✅ **[FAIT]** **Scaffold** monorepo (pnpm + Turbo, `docker-compose` avec Postgres, package `shared`). Factory modèle par-rôle, graphe parent + sous-graphes, API AI SDK v6 : tous câblés à l'étape 2 (le `/api/chat` streame le graphe complet — voir §16).
 1. ✅ **[FAIT]** **Schéma mémoire DB** (tables état + history, concept/mastery/student_profile/session_trace) + **appliers déterministes** + repos de lecture/hydratation + fixtures seedées. **API disponible dans `apps/backend/src/memory/`** : `hydrateForRevision(studentId, lessonId)` (bundle socratique §4.8), `applyMasteryOps(meta, ops[])` (forme collection), `applyProfileOp(meta, op)` (forme état) ; contrats zod `MasteryOpSchema`/`ProfileOpSchema` (`memory/ops.ts`) ; `meta = { studentId, changedBy, runId? }`. 43 tests verts.
 2. ✅ **[FAIT — étape 2, détail en §16]** **Tranche verticale `revise`** (le cœur / le skill nommable) : router → revise multi-tours (boucle concepts portée par checkpoint + dialogue socratique borné + signal de maîtrise `evaluate` gated) + **update mémoire incrémental déterministe** + `session_trace` + resolver de leçon (pick LLM enum fermé) + répétition espacée Leitner + streaming tokens, bout-en-bout depuis le client React. Sur fixtures seedées. *(Contrats de surface ajustés en passant : `mastery.confidence` retirée, colonnes SRS ajoutées.)*
-3. **Ingestion conversationnelle** (optimiste, draft + récap) + **HIL gate dur** (interrupt → data-confirm + guard resume) + intent `qa`. (L'ingestion n'est plus le "warm-up trivial" — elle a le HIL ; c'est pour ça qu'elle vient après le cœur.)
+3. **Ingestion conversationnelle** (optimiste, draft + récap) + **HIL gate dur** (interrupt → data-confirm + guard resume). (L'ingestion n'est plus le "warm-up trivial" — elle a le HIL ; c'est pour ça qu'elle vient après le cœur.) *(`qa` initialement prévu ici → **retiré**, décision 16/06 §17.)*
 4. **Approfondir le moat** : eval (B) + observabilité/coût (C) + **visibilité/rollback mémoire** (timeline d'history + restauration par replay via l'applier — la donnée versionnée est déjà là dès l'étape 1). Profondeur, pas largeur.
 5. **Durcir + writeup + conteneuriser** : docker compose propre, code propre, **writeup technique** (altitude par nœud, workflow-vs-agent/router, **design mémoire : 2 formes, politique d'écriture, audit/rollback, working vs long-term**) = artefact public obligatoire.
 
@@ -546,3 +548,27 @@ Le tout conteneurisé (docker compose : backend + Postgres), prêt-à-déployer 
     -d '{"id":"t1","messages":[{"id":"m1","role":"user","parts":[{"type":"text","text":"fais-moi réviser la leçon sur Napoléon"}]}]}'
   ```
   Attendu : `text-delta` de la question socratique (revise) ou de la redirection (out_of_scope). Aucun `type:"error"`.
+
+---
+
+## 17. Étape 3 — cadrage & journal d'implémentation (ouvert 16/06)
+
+> **Pour un agent qui reprend à froid :** point d'entrée de l'étape 3. §12.3 la définit ; ce qui suit est le cadrage **acté avec l'utilisateur le 16/06** (qui prime sur les mentions dispersées du brief) + l'état réel du code.
+
+### 17.1 Décisions de cadrage (16/06)
+- **`qa` RETIRÉ entièrement, enum compris** (`INTENTS = ["ingest","revise","out_of_scope"]`). Raison : le besoin réel = « ne pas enfermer l'élève entre révision et ingestion, autoriser des questions diverses à tout moment, pas forcément liées à une leçon ». Ce scope glisse vers la *curiosité ouverte* différée (§14) et fragilise la muraille `out_of_scope`. Tant que son scope n'est pas mûr, on l'enlève ; les questions diverses tombent sur `out_of_scope`.
+- **Ingestion = images / vision (full §5.2)**, pas une version texte allégée. File parts AI SDK v6 → `HumanMessage` multimodal → extraction vision structurée + `lesson_source_image` + data part de progression.
+- **`lesson.status` DIFFÉRÉ** (pas réintroduit) : aucun flow ne le *lit* (revise l'ignore ; le gate d'overwrite détecte la collision par **identité**, pick LLM, pas par statut). L'ajouter serait une colonne sans consommateur (anti-pattern §4.3). À réintroduire quand un consommateur réel apparaît.
+- **Pas de light-judge de sanity sur l'extraction** pour l'instant (initialement esquissé puis écarté 16/06). Repoussé avec le bloc eval/Langfuse.
+- **Le build s'arrête après l'étape 3 + Langfuse** (observabilité / coût / eval — §10/§11). **Les étapes 4 et 5 restent brouillon dans la spec** et ne sont pas engagées.
+
+### 17.2 Découpage en sous-tranches (un commit validé chacune)
+- **3.1** ✅ **Retrait de `qa`** (enum `shared` + nœud placeholder + `routeOnIntent` + prompt `classify` + tests). Garde-fous verts (typecheck/lint/107 tests), vérifié live (question diverse → `out_of_scope` ; revise intact).
+- **3.2** ⏳ **Ingestion image, chemin heureux** : file parts → `toBaseMessages` → `HumanMessage` multimodal → `parseLesson` (vision, structuré `bindTools`, **nœud interne** §16.4 §1+§3) → `persistDraft` (upsert idempotent lesson+concepts) + `lesson_source_image` (migration + volume local) → `recap` prose streamé. *(Si la deadline serre, `lesson_source_image` — surtout utile au replay/éval — est le candidat à trimmer.)*
+- **3.3** ⏳ **Data part de progression + seam front** : `TutorUIMessage = UIMessage<NoMetadata, { progress; confirm }>` (§8.1), handler `streamMode:["messages","custom"]` + `writer.merge`, rendu parts-based du `data-progress`. Premier signal non-prose (§7) ; amorce l'infra HIL.
+- **3.4** ⏳ **HIL gate dur (overwrite)** : détection de collision = **pick LLM enum fermé** (leçon existante | nouvelle, même pattern que le resolver §16.2/2.6) → `interrupt(confirm_overwrite)` **placé AVANT** `persistDraft` (zéro side-effect avant l'interrupt → re-run safe §5.5) → surfaçage `data-confirm` + `ConfirmCard` + input désactivé + **guard resume handler** (`getState` interrompu → `Command({resume})`, §6).
+
+### 17.3 État par sous-slice
+| # | État | Contenu livré | Fichiers clés |
+|---|---|---|---|
+| 3.1 | ✅ | `qa` retiré de l'enum et du graphe ; `out_of_scope` absorbe les questions diverses. | `shared/src/index.ts`, `graphs/intent.ts`, `graphs/router.graph.ts` (+ `.unit.test`) |

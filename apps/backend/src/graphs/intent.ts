@@ -17,12 +17,7 @@ export type Classification = z.infer<typeof IntentSchema>;
 // Below this confidence the router asks rather than guesses (no implicit choice).
 export const CONFIDENCE_THRESHOLD = 0.5;
 
-export type RouteTarget =
-  | "revise"
-  | "qa"
-  | "ingest"
-  | "out_of_scope"
-  | "clarify";
+export type RouteTarget = "revise" | "ingest" | "out_of_scope" | "clarify";
 
 // Pure routing decision: a classification → the next node. Low confidence or an
 // absent/unknown intent routes to `clarify` (ask), never to a guessed flow.
@@ -36,8 +31,6 @@ export function routeOnIntent(state: {
   switch (state.intent) {
     case "revise":
       return "revise";
-    case "qa":
-      return "qa";
     case "ingest":
       return "ingest";
     case "out_of_scope":

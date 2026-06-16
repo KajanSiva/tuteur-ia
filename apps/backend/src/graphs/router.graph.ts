@@ -81,8 +81,7 @@ const CLASSIFY_SYSTEM = `Tu es le routeur d'intention d'un tuteur scolaire (CM2,
 Classe le DERNIER message de l'élève dans exactement une intention :
 - "revise" : elle veut réviser / être interrogée sur une leçon.
 - "ingest" : elle veut ajouter ou transmettre une nouvelle leçon.
-- "qa" : elle pose une question ponctuelle sur une leçon.
-- "out_of_scope" : message hors du cadre scolaire des leçons.
+- "out_of_scope" : tout le reste (question hors leçon, bavardage, hors cadre scolaire).
 Donne aussi une confidence entre 0 et 1.`;
 
 // We bind the schema as a forced tool and read the parsed tool-call args, rather
@@ -151,9 +150,9 @@ async function clarify() {
 // loop is run-to-END + re-invoke per message: one POST = one dialogue turn.
 //   START ─ active? ─ yes → evaluate ─ decide ─ advance ─ decide ─ socratic/finish
 //          ├ pendingLessonChoice → resolveLesson (the student's lesson answer)
-//          └ no → classify → { revise → resolveLesson | qa | ingest | … }
+//          └ no → classify → { revise → resolveLesson | ingest | … }
 // resolveLesson maps the lesson hint to a lesson (→ revise/hydrate) or asks which
-// one. qa/ingest are placeholders; out_of_scope and clarify are final behaviour.
+// one. ingest is a placeholder; out_of_scope and clarify are final behaviour.
 export function buildRouterGraph(checkpointer?: BaseCheckpointSaver) {
   return new StateGraph(RouterState)
     .addNode("classify", classify)
@@ -163,7 +162,6 @@ export function buildRouterGraph(checkpointer?: BaseCheckpointSaver) {
     .addNode("evaluate", evaluateNode)
     .addNode("advance", advanceNode)
     .addNode("finish", finishNode)
-    .addNode("qa", flowPlaceholder("qa"))
     .addNode("ingest", flowPlaceholder("ingest"))
     .addNode("out_of_scope", outOfScope)
     .addNode("clarify", clarify)
@@ -174,7 +172,6 @@ export function buildRouterGraph(checkpointer?: BaseCheckpointSaver) {
     })
     .addConditionalEdges("classify", routeOnIntent, {
       revise: "resolveLesson",
-      qa: "qa",
       ingest: "ingest",
       out_of_scope: "out_of_scope",
       clarify: "clarify",
@@ -197,7 +194,6 @@ export function buildRouterGraph(checkpointer?: BaseCheckpointSaver) {
     })
     .addEdge("socratic", END)
     .addEdge("finish", END)
-    .addEdge("qa", END)
     .addEdge("ingest", END)
     .addEdge("out_of_scope", END)
     .addEdge("clarify", END)

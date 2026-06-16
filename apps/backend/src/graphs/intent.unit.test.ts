@@ -9,7 +9,6 @@ describe("routeOnIntent", () => {
     expect(routeOnIntent({ intent: "revise", confidence: confident })).toBe(
       "revise",
     );
-    expect(routeOnIntent({ intent: "qa", confidence: confident })).toBe("qa");
     expect(routeOnIntent({ intent: "ingest", confidence: confident })).toBe(
       "ingest",
     );
@@ -35,6 +34,6 @@ describe("routeOnIntent", () => {
   });
 
   it("proceeds on a known intent when no confidence is reported", () => {
-    expect(routeOnIntent({ intent: "qa" })).toBe("qa");
+    expect(routeOnIntent({ intent: "ingest" })).toBe("ingest");
   });
 });

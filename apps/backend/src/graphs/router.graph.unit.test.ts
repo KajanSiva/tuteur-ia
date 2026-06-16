@@ -15,7 +15,6 @@ describe("buildRouterGraph", () => {
       "evaluate",
       "advance",
       "finish",
-      "qa",
       "ingest",
       "out_of_scope",
       "clarify",
