@@ -10,6 +10,7 @@ import {
   createUIMessageStreamResponse,
   validateUIMessages,
 } from "ai";
+import { Command } from "@langchain/langgraph";
 import Fastify from "fastify";
 import { z } from "zod";
 
@@ -34,6 +35,10 @@ const router = buildRouterGraph(await createCheckpointer());
 const CommandSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("revise_lesson"), lessonId: z.string() }),
   z.object({ kind: z.literal("add_lesson") }),
+  z.object({
+    kind: z.literal("resume_overwrite"),
+    choice: z.enum(["replace", "keep_both", "cancel"]),
+  }),
 ]);
 
 // Envelope of a useChat request. The messages array is validated deeply by
@@ -81,15 +86,34 @@ app.post("/api/chat", async (request, reply) => {
     input.phase = "entering_revise";
   }
 
+  // Guard resume-vs-new-message (brief §6): if the thread is paused on a HIL
+  // interrupt, this POST is the answer to it — resume the graph with the chosen
+  // value instead of feeding a new message (which would be re-classified).
+  const config = { configurable: { thread_id: threadId } };
+  const before = await router.getState(config);
+  const wasInterrupted = (before.tasks ?? []).some(
+    (task) => (task.interrupts?.length ?? 0) > 0,
+  );
+  const resumeChoice =
+    command?.kind === "resume_overwrite" ? command.choice : "cancel";
+  const graphInput = wasInterrupted
+    ? (new Command({ resume: resumeChoice }) as Parameters<
+        typeof router.stream
+      >[0])
+    : input;
+
   const stream = createUIMessageStream({
+    onError: (error) => {
+      app.log.error({ err: error }, "ui stream execute failed");
+      return "An error occurred.";
+    },
     execute: async ({ writer }) => {
-      const graphStream = await router.stream(input, {
-          // "custom" carries non-prose data parts (progress, …) emitted by nodes
-          // via config.writer; the adapter maps them to `data-*` UI parts.
-          streamMode: ["messages", "values", "custom"],
-          configurable: { thread_id: threadId },
-        },
-      );
+      const graphStream = await router.stream(graphInput, {
+        // "custom" carries non-prose data parts (progress, …) emitted by nodes
+        // via config.writer; the adapter maps them to `data-*` UI parts.
+        streamMode: ["messages", "values", "custom"],
+        ...config,
+      });
 
       // The socratic node streams its tokens (surfaced here as text parts);
       // deterministic nodes emit a static message the adapter does not surface,
@@ -117,7 +141,8 @@ app.post("/api/chat", async (request, reply) => {
       }
 
       if (!streamedText && finalState) {
-        const last = finalState.messages.at(-1);
+        // On an interrupt the paused state carries no messages array — guard it.
+        const last = finalState.messages?.at(-1);
         const replyText =
           last && typeof last.content === "string" ? last.content : "";
         if (replyText) {
@@ -126,6 +151,27 @@ app.post("/api/chat", async (request, reply) => {
           writer.write({ type: "text-delta", id, delta: replyText });
           writer.write({ type: "text-end", id });
         }
+      }
+
+      // If the graph paused on a HIL interrupt, surface its payload as a
+      // data-confirm part (the back↔front contract): the front renders the
+      // matching card and disables input until the choice resumes the graph.
+      const after = await router.getState(config);
+      const pending = (after.tasks ?? []).flatMap(
+        (task) => task.interrupts ?? [],
+      );
+      const confirm: unknown = pending[0]?.value;
+      if (
+        confirm &&
+        typeof confirm === "object" &&
+        "kind" in confirm &&
+        confirm.kind === "confirm_overwrite"
+      ) {
+        writer.write({
+          type: "data-confirm",
+          id: "confirm-overwrite",
+          data: confirm,
+        });
       }
     },
   });

@@ -4,8 +4,16 @@ import {
   HumanMessage,
   SystemMessage,
 } from "@langchain/core/messages";
-import { END, type LangGraphRunnableConfig } from "@langchain/langgraph";
-import type { ChipAction } from "@tuteur/shared";
+import {
+  END,
+  interrupt,
+  type LangGraphRunnableConfig,
+} from "@langchain/langgraph";
+import type {
+  ChipAction,
+  ConfirmOverwrite,
+  OverwriteChoice,
+} from "@tuteur/shared";
 import { z } from "zod";
 
 import { prisma } from "../db/client.js";
@@ -16,6 +24,7 @@ import {
   persistDraftLesson,
   type SourceImage,
 } from "../memory/lesson-ingest.js";
+import { getLessonsForResolution } from "../memory/repositories.js";
 
 // Structured extraction the vision parse node emits. zod validates the shape of
 // the model's output; the persistence layer maps it to lesson + concept rows.
@@ -69,12 +78,19 @@ function toExtractedLesson(parsed: ParsedLesson): ExtractedLesson {
   };
 }
 
+// What the collision detector found: the existing lesson this ingestion would
+// overwrite (a re-ingestion of the same lesson), or null when it is new.
+export type IngestCollision = { lessonId: string; title: string };
+
 // The slice of graph state the ingest flow reads and writes. ingestedLessonId is
-// set by persist so the recap can offer a "revise this lesson" chip.
+// set by persist so the recap can offer a "revise this lesson" chip. collision +
+// overwriteChoice carry the hard-gate overwrite decision across the interrupt.
 export type IngestState = {
   messages: BaseMessage[];
   pendingIngestion: ExtractedLesson | null;
   ingestedLessonId: string | null;
+  collision: IngestCollision | null;
+  overwriteChoice: OverwriteChoice | null;
 };
 
 // Pulls the source images back out of the multimodal message blocks. toBaseMessages
@@ -166,26 +182,155 @@ export async function parseLessonNode(
   return { pendingIngestion: toExtractedLesson(parsed.data) };
 }
 
-// Routes out of parse: a successful extraction proceeds to persistence; anything
-// else has already emitted its message and ends the turn.
+// Routes out of parse: a successful extraction proceeds to collision detection;
+// anything else has already emitted its message and ends the turn.
 export function afterParse(
   state: IngestState,
-): "ingestPersist" | typeof END {
-  return state.pendingIngestion ? "ingestPersist" : END;
+): "ingestDetect" | typeof END {
+  return state.pendingIngestion ? "ingestDetect" : END;
+}
+
+// --- Collision detection (does this ingestion overwrite an existing lesson?) ---
+
+function lessonKey(index: number): string {
+  return `L${index + 1}`;
+}
+
+const COLLISION_SYSTEM = `On vient de transcrire une nouvelle leçon depuis des photos. Détermine si elle correspond à une leçon DÉJÀ enregistrée (même leçon ré-photographiée / corrigée), ou si c'est une leçon nouvelle.
+Réponds par la clé de la leçon existante UNIQUEMENT si c'est vraiment la même leçon (même sujet précis), pas seulement un thème voisin. Sinon réponds « new ».`;
+
+// Closed-set LLM pick over the existing lessons (same bindTools pattern as the
+// resolver, so it stays internal). Returns the matched lesson or null (new).
+export async function detectCollisionNode(
+  state: IngestState,
+): Promise<Partial<IngestState>> {
+  const extracted = state.pendingIngestion;
+  if (!extracted) {
+    return { collision: null };
+  }
+  const lessons = await getLessonsForResolution();
+  if (lessons.length === 0) {
+    return { collision: null };
+  }
+
+  const keys = lessons.map((_, index) => lessonKey(index));
+  const choices: string[] = [...keys, "new"];
+  const schema = z.object({
+    match: z
+      .enum(choices as [string, ...string[]])
+      .describe("La clé de la leçon existante correspondante, ou « new »."),
+  });
+  const catalogue = lessons
+    .map(
+      (lesson, index) =>
+        `${lessonKey(index)} — ${lesson.title}. Sujets : ${lesson.concepts
+          .map((concept) => concept.label)
+          .join(" ; ")}`,
+    )
+    .join("\n");
+
+  const base = await getModel("classifier");
+  if (!base.bindTools) {
+    throw new Error("collision detector model does not support tool calling");
+  }
+  const model = base.bindTools(
+    [
+      {
+        name: "detecter_collision",
+        description: "Identifie si la leçon existe déjà.",
+        schema,
+      },
+    ],
+    { tool_choice: "detecter_collision" },
+  );
+  const response = await model.invoke([
+    new SystemMessage(`${COLLISION_SYSTEM}\n\nLeçons enregistrées :\n${catalogue}`),
+    new HumanMessage(
+      `Nouvelle leçon : « ${extracted.title} ». Concepts : ${extracted.concepts
+        .map((concept) => concept.label)
+        .join(" ; ")}.`,
+    ),
+  ]);
+
+  const parsed = schema.safeParse(response.tool_calls?.[0]?.args);
+  const match = parsed.success ? parsed.data.match : "new";
+  const index = /^L(\d+)$/.exec(match);
+  const lesson = index ? lessons[Number(index[1]) - 1] : undefined;
+  return {
+    collision: lesson ? { lessonId: lesson.id, title: lesson.title } : null,
+  };
+}
+
+// A collision needs the hard-gate confirmation; otherwise persist directly.
+export function afterDetect(
+  state: IngestState,
+): "ingestConfirm" | "ingestPersist" {
+  return state.collision ? "ingestConfirm" : "ingestPersist";
+}
+
+// HIL hard gate: pause the graph and ask the child what to do about the existing
+// lesson. The interrupt payload is the back↔front contract (its kind tells the
+// front which card to render). No side-effect precedes the interrupt; the node
+// re-runs from the top on resume, where interrupt() returns the chosen value
+// (brief §5.5) — never wrap it in try/catch.
+export function confirmOverwriteNode(
+  state: IngestState,
+): Partial<IngestState> {
+  if (!state.collision) {
+    return { overwriteChoice: null };
+  }
+  const payload: ConfirmOverwrite = {
+    kind: "confirm_overwrite",
+    title: state.collision.title,
+    options: [
+      { label: "Remplacer", choice: "replace" },
+      { label: "Garder les deux", choice: "keep_both" },
+      { label: "Annuler", choice: "cancel" },
+    ],
+  };
+  const choice = interrupt<ConfirmOverwrite, OverwriteChoice>(payload);
+  return { overwriteChoice: choice };
+}
+
+// Cancel keeps the existing lesson untouched and discards the new ingestion.
+export function afterConfirm(
+  state: IngestState,
+): "ingestCancel" | "ingestPersist" {
+  return state.overwriteChoice === "cancel" ? "ingestCancel" : "ingestPersist";
+}
+
+export async function cancelOverwriteNode(
+  state: IngestState,
+): Promise<Partial<IngestState>> {
+  const title = state.collision?.title ?? "ta leçon";
+  return {
+    messages: [
+      new AIMessage(
+        `D'accord, je n'ai rien changé. « ${title} » reste comme avant.`,
+      ),
+    ],
+    pendingIngestion: null,
+    collision: null,
+    overwriteChoice: null,
+  };
 }
 
 // Deterministic persistence: writes the lesson draft (lesson + concepts + source
-// images) optimistically. The recap that follows is the safety net for any
-// extraction error (the child corrects by re-ingesting).
+// images) optimistically. On a "replace" choice the colliding lesson is deleted
+// first (a full re-ingestion; its mastery rows cascade away — MVP overwrite,
+// brief §14). "keep_both" and the no-collision path just add a new lesson.
 export async function persistDraftNode(
   state: IngestState,
 ): Promise<Partial<IngestState>> {
   if (!state.pendingIngestion) {
     return {};
   }
+  if (state.overwriteChoice === "replace" && state.collision) {
+    await prisma.lesson.delete({ where: { id: state.collision.lessonId } });
+  }
   const images = extractSourceImages(state.messages);
   const { lessonId } = await persistDraftLesson(state.pendingIngestion, images);
-  return { ingestedLessonId: lessonId };
+  return { ingestedLessonId: lessonId, collision: null, overwriteChoice: null };
 }
 
 // The recap's bounded next-steps, as structured chip commands (brief §17). The

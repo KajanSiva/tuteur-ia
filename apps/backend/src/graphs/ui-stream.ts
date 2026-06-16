@@ -6,6 +6,7 @@ const INTERNAL_NODES = new Set([
   "evaluate",
   "resolveLesson",
   "ingestParse",
+  "ingestDetect",
 ]);
 
 // Drops `["messages", [chunk, metadata]]` tuples emitted by internal nodes from

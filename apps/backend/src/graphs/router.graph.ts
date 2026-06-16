@@ -7,12 +7,18 @@ import {
   START,
   StateGraph,
 } from "@langchain/langgraph";
-import type { Intent } from "@tuteur/shared";
+import type { Intent, OverwriteChoice } from "@tuteur/shared";
 
 import type { ExtractedLesson } from "../memory/lesson-ingest.js";
 import { getModel } from "../llm/models.js";
 import {
+  afterConfirm,
+  afterDetect,
   afterParse,
+  cancelOverwriteNode,
+  confirmOverwriteNode,
+  detectCollisionNode,
+  type IngestCollision,
   parseLessonNode,
   persistDraftNode,
   recapNode,
@@ -86,6 +92,14 @@ export const RouterState = Annotation.Root({
     default: () => null,
   }),
   ingestedLessonId: Annotation<string | null>({
+    reducer: (_, next) => next,
+    default: () => null,
+  }),
+  collision: Annotation<IngestCollision | null>({
+    reducer: (_, next) => next,
+    default: () => null,
+  }),
+  overwriteChoice: Annotation<OverwriteChoice | null>({
     reducer: (_, next) => next,
     default: () => null,
   }),
@@ -173,6 +187,9 @@ export function buildRouterGraph(checkpointer?: BaseCheckpointSaver) {
     .addNode("advance", advanceNode)
     .addNode("finish", finishNode)
     .addNode("ingestParse", parseLessonNode)
+    .addNode("ingestDetect", detectCollisionNode)
+    .addNode("ingestConfirm", confirmOverwriteNode)
+    .addNode("ingestCancel", cancelOverwriteNode)
     .addNode("ingestPersist", persistDraftNode)
     .addNode("ingestRecap", recapNode)
     .addNode("out_of_scope", outOfScope)
@@ -206,11 +223,20 @@ export function buildRouterGraph(checkpointer?: BaseCheckpointSaver) {
       finish: "finish",
     })
     .addConditionalEdges("ingestParse", afterParse, {
-      ingestPersist: "ingestPersist",
+      ingestDetect: "ingestDetect",
       [END]: END,
+    })
+    .addConditionalEdges("ingestDetect", afterDetect, {
+      ingestConfirm: "ingestConfirm",
+      ingestPersist: "ingestPersist",
+    })
+    .addConditionalEdges("ingestConfirm", afterConfirm, {
+      ingestCancel: "ingestCancel",
+      ingestPersist: "ingestPersist",
     })
     .addEdge("ingestPersist", "ingestRecap")
     .addEdge("ingestRecap", END)
+    .addEdge("ingestCancel", END)
     .addEdge("socratic", END)
     .addEdge("finish", END)
     .addEdge("out_of_scope", END)

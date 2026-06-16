@@ -4,11 +4,14 @@ import { describe, expect, it } from "vitest";
 
 import type { ExtractedLesson } from "../memory/lesson-ingest.js";
 import {
+  afterConfirm,
+  afterDetect,
   afterParse,
   buildRecapActions,
   buildRecapInput,
   buildRecapSystem,
   extractSourceImages,
+  type IngestState,
 } from "./ingest.js";
 
 function imageBlock(url: string) {
@@ -57,6 +60,17 @@ describe("extractSourceImages", () => {
   });
 });
 
+function ingestState(over: Partial<IngestState> = {}): IngestState {
+  return {
+    messages: [],
+    pendingIngestion: null,
+    ingestedLessonId: null,
+    collision: null,
+    overwriteChoice: null,
+    ...over,
+  };
+}
+
 describe("afterParse", () => {
   const lesson: ExtractedLesson = {
     title: "T",
@@ -66,16 +80,46 @@ describe("afterParse", () => {
     concepts: [{ label: "x", precisionBar: "exact", precisionNote: null }],
   };
 
-  it("proceeds to persistence on a successful extraction", () => {
-    expect(
-      afterParse({ messages: [], pendingIngestion: lesson, ingestedLessonId: null }),
-    ).toBe("ingestPersist");
+  it("proceeds to collision detection on a successful extraction", () => {
+    expect(afterParse(ingestState({ pendingIngestion: lesson }))).toBe(
+      "ingestDetect",
+    );
   });
 
   it("ends the turn when nothing was extracted", () => {
+    expect(afterParse(ingestState())).toBe(END);
+  });
+});
+
+describe("afterDetect", () => {
+  it("routes a collision to the confirmation gate", () => {
     expect(
-      afterParse({ messages: [], pendingIngestion: null, ingestedLessonId: null }),
-    ).toBe(END);
+      afterDetect(ingestState({ collision: { lessonId: "l1", title: "X" } })),
+    ).toBe("ingestConfirm");
+  });
+
+  it("persists directly when the lesson is new", () => {
+    expect(afterDetect(ingestState())).toBe("ingestPersist");
+  });
+});
+
+describe("afterConfirm", () => {
+  it("cancels on the cancel choice (existing lesson untouched)", () => {
+    expect(afterConfirm(ingestState({ overwriteChoice: "cancel" }))).toBe(
+      "ingestCancel",
+    );
+  });
+
+  it("persists on replace", () => {
+    expect(afterConfirm(ingestState({ overwriteChoice: "replace" }))).toBe(
+      "ingestPersist",
+    );
+  });
+
+  it("persists on keep_both", () => {
+    expect(afterConfirm(ingestState({ overwriteChoice: "keep_both" }))).toBe(
+      "ingestPersist",
+    );
   });
 });
 
