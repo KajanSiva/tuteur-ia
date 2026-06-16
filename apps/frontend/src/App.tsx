@@ -120,12 +120,19 @@ export default function App() {
   const [input, setInput] = useState("");
   const [images, setImages] = useState<File[]>([]);
   const fileInput = useRef<HTMLInputElement>(null);
+  const bottomRef = useRef<HTMLDivElement>(null);
   const busy = status === "submitted" || status === "streaming";
 
   // The progress signal is transient: clear it once the turn settles.
   useEffect(() => {
     if (!busy) setProgress(null);
   }, [busy]);
+
+  // Keep the latest message in view — on a new turn and as a reply streams in,
+  // so the child always sees that the tutor answered.
+  useEffect(() => {
+    bottomRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
+  }, [messages, busy]);
 
   function pickImages(event: ChangeEvent<HTMLInputElement>) {
     const picked = event.target.files;
@@ -200,7 +207,7 @@ export default function App() {
         </div>
       </header>
 
-      <div className="flex-1 space-y-3 overflow-y-auto py-2">
+      <div className="flex-1 space-y-3 overflow-y-auto py-2 pr-3">
         {messages.length === 0 && <ChatEmptyState />}
         {messages.map((message, messageIndex) => {
           const role = message.role === "user" ? "user" : "assistant";
@@ -300,6 +307,7 @@ export default function App() {
             </div>
           </div>
         )}
+        <div ref={bottomRef} />
       </div>
 
       {images.length > 0 && (
