@@ -72,6 +72,18 @@ async function downscaleToFilePart(file: File) {
   };
 }
 
+// Lightweight "the tutor is thinking" indicator: three bouncing dots, shown
+// while waiting for any reply that hasn't started streaming text yet.
+function ThinkingDots() {
+  return (
+    <span className="flex items-center gap-1">
+      <span className="size-1.5 animate-bounce rounded-full bg-muted-foreground/60 [animation-delay:-0.3s]" />
+      <span className="size-1.5 animate-bounce rounded-full bg-muted-foreground/60 [animation-delay:-0.15s]" />
+      <span className="size-1.5 animate-bounce rounded-full bg-muted-foreground/60" />
+    </span>
+  );
+}
+
 export default function App() {
   const [progress, setProgress] = useState<string | null>(null);
   const { messages, sendMessage, status } = useChat<TutorUIMessage>({
@@ -122,6 +134,18 @@ export default function App() {
     void sendMessage({ text: "Réviser cette leçon" }, { body: { command } });
   }
 
+  // Show a waiting indicator while a reply is pending and no assistant text has
+  // started streaming yet (deterministic turns never stream tokens, so the dots
+  // cover the whole wait). The ingestion vision step replaces it with its own
+  // specific progress message.
+  const lastMessage = messages.at(-1);
+  const assistantTextStreaming =
+    lastMessage?.role === "assistant" &&
+    lastMessage.parts.some(
+      (part) => part.type === "text" && part.text.length > 0,
+    );
+  const showThinking = busy && !assistantTextStreaming;
+
   async function submit(event: FormEvent) {
     event.preventDefault();
     const typed = input.trim();
@@ -153,8 +177,12 @@ export default function App() {
 
       <div className="flex-1 space-y-3 overflow-y-auto py-2">
         {messages.length === 0 && <ChatEmptyState />}
-        {messages.map((message) => {
+        {messages.map((message, messageIndex) => {
           const role = message.role === "user" ? "user" : "assistant";
+          // Chips are live only on the most recent message: once the
+          // conversation has moved on, past affordances become inert (they stay
+          // for history but can't be re-triggered).
+          const isLast = messageIndex === messages.length - 1;
           return message.parts.map((part, index) => {
             const key = `${message.id}-${index}`;
             switch (part.type) {
@@ -184,7 +212,7 @@ export default function App() {
                         type="button"
                         variant="secondary"
                         size="sm"
-                        disabled={busy}
+                        disabled={busy || !isLast}
                         onClick={() => runCommand(action.command)}
                       >
                         {action.label}
@@ -198,11 +226,17 @@ export default function App() {
             }
           });
         })}
-        {busy && progress && (
+        {showThinking && (
           <div className="flex justify-start">
             <div className="flex items-center gap-2 rounded-3xl rounded-bl-lg border border-border bg-card px-4 py-2.5 text-sm text-muted-foreground shadow-sm">
-              <Loader2 className="size-4 animate-spin" />
-              {progress}
+              {progress ? (
+                <>
+                  <Loader2 className="size-4 animate-spin" />
+                  {progress}
+                </>
+              ) : (
+                <ThinkingDots />
+              )}
             </div>
           </div>
         )}
