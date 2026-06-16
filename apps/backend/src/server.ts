@@ -63,7 +63,9 @@ app.post("/api/chat", async (request, reply) => {
       const graphStream = await router.stream(
         { messages },
         {
-          streamMode: ["messages", "values"],
+          // "custom" carries non-prose data parts (progress, …) emitted by nodes
+          // via config.writer; the adapter maps them to `data-*` UI parts.
+          streamMode: ["messages", "values", "custom"],
           configurable: { thread_id: threadId },
         },
       );

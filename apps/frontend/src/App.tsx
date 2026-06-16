@@ -1,9 +1,9 @@
 import type { ChangeEvent, FormEvent } from "react";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useChat } from "@ai-sdk/react";
 import { DefaultChatTransport } from "ai";
 import type { TutorUIMessage } from "@tuteur/shared";
-import { ImagePlus, Send, Sparkles, X } from "lucide-react";
+import { ImagePlus, Loader2, Send, Sparkles, X } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -60,13 +60,30 @@ async function downscaleToFilePart(file: File) {
 }
 
 export default function App() {
+  const [progress, setProgress] = useState<string | null>(null);
   const { messages, sendMessage, status } = useChat<TutorUIMessage>({
     transport,
+    onData: (part) => {
+      if (
+        part.type === "data-progress" &&
+        part.data &&
+        typeof part.data === "object" &&
+        "message" in part.data &&
+        typeof part.data.message === "string"
+      ) {
+        setProgress(part.data.message);
+      }
+    },
   });
   const [input, setInput] = useState("");
   const [images, setImages] = useState<File[]>([]);
   const fileInput = useRef<HTMLInputElement>(null);
   const busy = status === "submitted" || status === "streaming";
+
+  // The progress signal is transient: clear it once the turn settles.
+  useEffect(() => {
+    if (!busy) setProgress(null);
+  }, [busy]);
 
   function pickImages(event: ChangeEvent<HTMLInputElement>) {
     const picked = event.target.files;
@@ -137,6 +154,14 @@ export default function App() {
             }
           });
         })}
+        {busy && progress && (
+          <div className="flex justify-start">
+            <div className="flex items-center gap-2 rounded-3xl rounded-bl-lg border border-border bg-card px-4 py-2.5 text-sm text-muted-foreground shadow-sm">
+              <Loader2 className="size-4 animate-spin" />
+              {progress}
+            </div>
+          </div>
+        )}
       </div>
 
       {images.length > 0 && (

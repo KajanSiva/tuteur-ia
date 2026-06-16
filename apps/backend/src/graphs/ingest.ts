@@ -4,7 +4,7 @@ import {
   HumanMessage,
   SystemMessage,
 } from "@langchain/core/messages";
-import { END } from "@langchain/langgraph";
+import { END, type LangGraphRunnableConfig } from "@langchain/langgraph";
 import { z } from "zod";
 
 import { prisma } from "../db/client.js";
@@ -112,6 +112,7 @@ Si plusieurs pages sont fournies, elles forment UNE seule leçon dans l'ordre.`;
 // messages. No image → ask for a photo; a malformed extraction → ask to retry.
 export async function parseLessonNode(
   state: IngestState,
+  config: LangGraphRunnableConfig,
 ): Promise<Partial<IngestState>> {
   const images = extractSourceImages(state.messages);
   if (images.length === 0) {
@@ -124,6 +125,10 @@ export async function parseLessonNode(
       pendingIngestion: null,
     };
   }
+
+  // Transient progress: the vision parse is slow. Emitted on the custom stream
+  // (streamMode "custom") → surfaced as a transient `data-progress` part.
+  config.writer?.({ type: "progress", message: "J'analyse ta leçon…" });
 
   const base = await getModel("ingest_parse");
   if (!base.bindTools) {
