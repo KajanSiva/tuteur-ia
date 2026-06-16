@@ -202,7 +202,7 @@ Règles :
 - Chaque op appliquée écrit une ligne d'history = **snapshot RÉSULTANT (l'état après l'op)** + **provenance** : `op, raison, changed_by (nom du nœud), run_id (thread/run LangGraph), version, recorded_at`. **Pas de stockage `ancienne_valeur`+`nouvelle_valeur`** (décision 12/06) : la valeur d'avant = la version N-1 de la timeline, on ne duplique pas.
 - **Visibilité** = lire la timeline d'une cible (`SELECT … FROM *_history WHERE … ORDER BY version`) : quoi, quand, par quel nœud.
 - **Rollback** = lire la version N → la **rejouer comme une nouvelle op** (via l'applier, `force: true`). Se logge à son tour (nouvelle version), rien n'est détruit.
-- ⏳ **Visibilité + rollback différés à l'étape 4** (profondeur du moat, décision 12/06) : la **donnée versionnée est déjà en place** (l'applier écrit l'history à chaque op) ; il ne reste qu'à câbler la lecture de timeline et la fonction de restauration (un read + un replay) — elles **réutilisent l'applier**, aucune logique de mutation nouvelle.
+- ⛔ **Visibilité + rollback hors scope de ce build** : la **donnée versionnée est déjà en place** (l'applier écrit l'history à chaque op) ; le câblage de la lecture de timeline et de la restauration par replay (un read + un replay, **réutilisant l'applier**, aucune mutation nouvelle) n'est **pas planifié** — extension future si un consommateur le réclame.
 - Visibilité et rollback = **le même mécanisme** (le journal d'opérations EST la piste d'audit). Défense en profondeur : la politique d'écriture *réduit* les mauvaises écritures, l'history *rattrape* celles qui passent.
 - ⚠️ **Le checkpointer LangGraph ≠ rollback de mémoire domaine.** Il versionne l'**état d'exécution du graphe par `thread_id`** (rewind d'une conversation). Tes tables d'history versionnent le **modèle élève**. Deux axes différents — ne pas confondre.
 
@@ -413,11 +413,8 @@ Méthode : **d'abord produire du structuré** (feuille Q/R + signaux de maîtris
 0. ✅ **[FAIT]** **Scaffold** monorepo (pnpm + Turbo, `docker-compose` avec Postgres, package `shared`). Factory modèle par-rôle, graphe parent + sous-graphes, API AI SDK v6 : tous câblés à l'étape 2 (le `/api/chat` streame le graphe complet — voir §16).
 1. ✅ **[FAIT]** **Schéma mémoire DB** (tables état + history, concept/mastery/student_profile/session_trace) + **appliers déterministes** + repos de lecture/hydratation + fixtures seedées. **API disponible dans `apps/backend/src/memory/`** : `hydrateForRevision(studentId, lessonId)` (bundle socratique §4.8), `applyMasteryOps(meta, ops[])` (forme collection), `applyProfileOp(meta, op)` (forme état) ; contrats zod `MasteryOpSchema`/`ProfileOpSchema` (`memory/ops.ts`) ; `meta = { studentId, changedBy, runId? }`. 43 tests verts.
 2. ✅ **[FAIT — étape 2, détail en §16]** **Tranche verticale `revise`** (le cœur / le skill nommable) : router → revise multi-tours (boucle concepts portée par checkpoint + dialogue socratique borné + signal de maîtrise `evaluate` gated) + **update mémoire incrémental déterministe** + `session_trace` + resolver de leçon (pick LLM enum fermé) + répétition espacée Leitner + streaming tokens, bout-en-bout depuis le client React. Sur fixtures seedées. *(Contrats de surface ajustés en passant : `mastery.confidence` retirée, colonnes SRS ajoutées.)*
-3. **Ingestion conversationnelle** (optimiste, draft + récap) + **HIL gate dur** (interrupt → data-confirm + guard resume). (L'ingestion n'est plus le "warm-up trivial" — elle a le HIL ; c'est pour ça qu'elle vient après le cœur.) *(`qa` initialement prévu ici → **retiré**, décision 16/06 §17.)*
-4. **Approfondir le moat** : eval (B) + observabilité/coût (C) + **visibilité/rollback mémoire** (timeline d'history + restauration par replay via l'applier — la donnée versionnée est déjà là dès l'étape 1). Profondeur, pas largeur.
-5. **Durcir + writeup + conteneuriser** : docker compose propre, code propre, **writeup technique** (altitude par nœud, workflow-vs-agent/router, **design mémoire : 2 formes, politique d'écriture, audit/rollback, working vs long-term**) = artefact public obligatoire.
-
-**Stretch (seulement si core fini tôt)** : édition chirurgicale de leçon ; intent curiosité ouverte cadrée ; boucle d'auto-amélioration du skill ; OpenCode + DeepSeek pour le coût ; eval élargie ; garde-fous drift/poisoning. **Pas avant.**
+3. ✅ **[FAIT — étape 3, détail en §17]** **Ingestion conversationnelle** (vision : photos → extraction → draft + récap terminal) + **HIL gate dur** (collision → interrupt → data-confirm + guard resume) + **primitive chips** (`data-actions`) + **progression** + **refacto state-machine `phase`**. *(`qa` retiré, décision 16/06 §17.)*
+4. **Langfuse** (dernière étape) : intégrer la plateforme et **tester les trois aspects en passant par elle** — **observabilité** (traces des nœuds / du graphe), **coût** (par séance / par rôle de modèle — la distillation incrémentale et la factory par-rôle sont les angles à montrer), **eval** (LLM-as-judge factuel + socratique, calibré par `precision_bar` ; les tables `*_history` fournissent un dataset gratuit). Câblé après que les flows cœur tournent (ils tournent). **Fin du build.**
 
 ---
 
@@ -426,10 +423,8 @@ Méthode : **d'abord produire du structuré** (feuille Q/R + signaux de maîtris
 Sur **2-3 séances réelles** via l'app React (un seul chat) :
 1. **Router workflow déterministe** (classify → sous-graphes) ; cœur `revise` bout-en-bout ; **mémoire DB modélisée** (concept/mastery, 2 formes) ; **update = applier déterministe** ADD/UPDATE/DELETE/NOOP avec history/provenance.
 2. **Distillation incrémentale** démontrable (mémoire à jour même sans fin de séance propre).
-3. Observabilité + coût/séance câblés (Langfuse/OTel) : un chiffre + des traces.
-4. **Une** eval LLM-as-judge (factuel + socratique).
-5. Writeup technique (altitude par nœud + design mémoire + working-vs-long-term + politique d'écriture/rollback).
-Le tout conteneurisé (docker compose : backend + Postgres), prêt-à-déployer (non déployé).
+3. **Ingestion vision + HIL gate dur** (étape 3) : photos → draft + récap, overwrite confirmé par interrupt.
+4. **Langfuse** : observabilité + coût/séance + **une** eval LLM-as-judge (factuel + socratique), le tout testé via la plateforme. = la dernière étape.
 
 ---
 
@@ -463,7 +458,7 @@ Le tout conteneurisé (docker compose : backend + Postgres), prêt-à-déployer 
 - **`is_locked`** : défaut TRUE sur `student_profile` (mémoire procédurale), FALSE sur `mastery` ; surchargé par un flag `force` explicite et loggé.
 - **Applier = functional core / imperative shell** : décision PURE testée sans DB + coquille transactionnelle (§4.5).
 - **Différés à l'ingestion (étape 3)** : `lesson.status`, `lesson_source_image`, `observation`.
-- **Rollback + visibilité différés à l'étape 4** (la donnée versionnée est déjà produite par l'applier dès l'étape 1) — §4.6.
+- **Rollback + visibilité hors scope de ce build** (la donnée versionnée est déjà produite par l'applier dès l'étape 1 ; câblage non planifié) — §4.6.
 - **Tests** : intégration sur base dédiée **`tuteur_test`** auto-provisionnée ; **vitest** en deux *projects* (`unit` sans DB / `integration` avec). Stratégie de test détaillée dans **CLAUDE.md**.
 - **Front (hors design mémoire)** : Tailwind v4 + shadcn/ui, thème custom "Atelier" (tokens CSS). Le front reste un client mince jetable jusqu'au câblage `useChat`/streaming (étape 2).
 
@@ -560,7 +555,7 @@ Le tout conteneurisé (docker compose : backend + Postgres), prêt-à-déployer 
 - **Ingestion = images / vision (full §5.2)**, pas une version texte allégée. File parts AI SDK v6 → `HumanMessage` multimodal → extraction vision structurée + `lesson_source_image` + data part de progression.
 - **`lesson.status` DIFFÉRÉ** (pas réintroduit) : aucun flow ne le *lit* (revise l'ignore ; le gate d'overwrite détecte la collision par **identité**, pick LLM, pas par statut). L'ajouter serait une colonne sans consommateur (anti-pattern §4.3). À réintroduire quand un consommateur réel apparaît.
 - **Pas de light-judge de sanity sur l'extraction** pour l'instant (initialement esquissé puis écarté 16/06). Repoussé avec le bloc eval/Langfuse.
-- **Le build s'arrête après l'étape 3 + Langfuse** (observabilité / coût / eval — §10/§11). **Les étapes 4 et 5 restent brouillon dans la spec** et ne sont pas engagées.
+- **Le build s'arrête après l'étape 3 + Langfuse** (observabilité / coût / eval — §10/§11, §12.4). L'étape 3 est **livrée** ; il ne reste que Langfuse. Les anciennes étapes 4/5 (rollback/visibilité, durcissement, writeup, conteneurisation) et les idées « stretch » étaient floues → **retirées de la roadmap** (16/06) ; la donnée d'audit reste versionnée si on veut y revenir un jour (§4.6).
 - **Philosophie UX « le mode d'input suit l'état conversationnel » (décision 16/06)** — c'est le principe d'altitude du brief appliqué à l'UI : **texte libre réservé à la pédagogie** (réponses socratiques, où l'ouverture a de la valeur) ; **tout choix d'orchestration** (confirmer, choisir une leçon, continuer, overwrite) surfacé comme **affordance bornée = chips portant une commande structurée** (jamais du texte re-classifié par `classify` — re-deviner une navigation = faire orchestrer le LLM, ce qu'on interdit) ; **moments terminaux** (leçon enregistrée, fin de cycle) = pas de question, un lanceur. Recoupe le consensus écosystème (hybride quick-replies + texte ; generative UI sur data parts). Bénéfices alignés sur les anti-goals : muraille `out_of_scope` plus solide, classifier moins sollicité (coût), **contexte borné** (on peut démarrer des sessions fraîches entre cycles). **Conséquences (faites)** : (1) le récap d'ingestion est rendu **terminal** (ne pose plus de question pendante que rien ne consomme ; correction = ré-ingestion, §5.2) ; (2) la **primitive chips** (3.3b) ; (3) la **consolidation des booléens de mode en un champ `phase` explicite** — faite **avant 3.4** (décision 16/06) : `reviseActive`/`pendingLessonChoice`/`enterReviseLessonId` → une union `RoutingPhase` (`idle`/`revising`/`choosing_lesson`/`entering_revise`), `routeStart` = un `switch` exhaustif ([phase.ts](apps/backend/src/graphs/phase.ts)). Bénéfice : phases mutuellement exclusives → la classe de bug « flag périmé qui écrase une session » disparaît par construction, et oublier un cas = erreur de compilation. Recoupe l'écosystème (anti-pattern = accumuler flags + try/except ; FSM explicite = maintenable). ⚠️ Changement de schéma d'état → les checkpoints d'anciens threads (sans `phase`) retombent sur `idle` ; thread jetable (§8) = un relancement règle.
 
 ### 17.2 Découpage en sous-tranches (un commit validé chacune)
