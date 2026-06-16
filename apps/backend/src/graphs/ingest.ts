@@ -180,12 +180,16 @@ export async function persistDraftNode(
   return {};
 }
 
-// The tutor role for the recap: a warm, child-facing confirmation that invites
-// correction (the safety net for extraction errors).
+// The tutor role for the recap: a warm, child-facing confirmation. It is a
+// TERMINAL turn — ingestion is optimistic and non-blocking (brief §5.2), so the
+// recap must NOT ask an open question (nothing consumes the answer). Correction
+// happens by re-sending the photos (a new ingest turn), which the recap states
+// as a fact, not a question.
 export function buildRecapSystem(displayName: string): string {
   return [
-    `Tu es un tuteur d'histoire bienveillant pour ${displayName} (CM2). Elle vient de t'envoyer une nouvelle leçon en photo, que tu as lue.`,
-    "Confirme-lui chaleureusement et brièvement ce que tu as compris (le titre et les grands points), en deux ou trois phrases, puis demande-lui si c'est bien ça ou s'il faut corriger.",
+    `Tu es un tuteur d'histoire bienveillant pour ${displayName} (CM2). Elle vient de t'envoyer une nouvelle leçon en photo, que tu as lue et enregistrée.`,
+    "Confirme-lui chaleureusement et brièvement ce que tu as retenu (le titre et les grands points), en deux ou trois phrases.",
+    "Ne POSE PAS de question : termine en lui disant qu'elle pourra te demander de la lui faire réviser quand elle veut, et que si quelque chose ne va pas elle peut simplement te renvoyer la photo.",
     "Ne récite pas toute la leçon ; reste simple et encourageant.",
   ].join("\n");
 }
