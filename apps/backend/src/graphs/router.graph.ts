@@ -9,7 +9,14 @@ import {
 } from "@langchain/langgraph";
 import type { Intent } from "@tuteur/shared";
 
+import type { ExtractedLesson } from "../memory/lesson-ingest.js";
 import { getModel } from "../llm/models.js";
+import {
+  afterParse,
+  parseLessonNode,
+  persistDraftNode,
+  recapNode,
+} from "./ingest.js";
 import { IntentSchema, routeOnIntent } from "./intent.js";
 import { afterResolveLesson, resolveLessonNode } from "./lesson-resolver.js";
 import {
@@ -75,6 +82,10 @@ export const RouterState = Annotation.Root({
     reducer: (_, next) => next,
     default: () => false,
   }),
+  pendingIngestion: Annotation<ExtractedLesson | null>({
+    reducer: (_, next) => next,
+    default: () => null,
+  }),
 });
 
 const CLASSIFY_SYSTEM = `Tu es le routeur d'intention d'un tuteur scolaire (CM2, Histoire).
@@ -118,12 +129,6 @@ async function classify(state: typeof RouterState.State) {
   return { intent: parsed.data.intent, confidence: parsed.data.confidence };
 }
 
-function flowPlaceholder(flow: string) {
-  return async () => ({
-    messages: [new AIMessage(`Flux « ${flow} » bientôt disponible.`)],
-  });
-}
-
 async function outOfScope() {
   return {
     messages: [
@@ -152,7 +157,8 @@ async function clarify() {
 //          ├ pendingLessonChoice → resolveLesson (the student's lesson answer)
 //          └ no → classify → { revise → resolveLesson | ingest | … }
 // resolveLesson maps the lesson hint to a lesson (→ revise/hydrate) or asks which
-// one. ingest is a placeholder; out_of_scope and clarify are final behaviour.
+// one. ingest parses lesson images (vision), persists a draft, and streams a
+// recap. out_of_scope and clarify are final behaviour.
 export function buildRouterGraph(checkpointer?: BaseCheckpointSaver) {
   return new StateGraph(RouterState)
     .addNode("classify", classify)
@@ -162,7 +168,9 @@ export function buildRouterGraph(checkpointer?: BaseCheckpointSaver) {
     .addNode("evaluate", evaluateNode)
     .addNode("advance", advanceNode)
     .addNode("finish", finishNode)
-    .addNode("ingest", flowPlaceholder("ingest"))
+    .addNode("ingestParse", parseLessonNode)
+    .addNode("ingestPersist", persistDraftNode)
+    .addNode("ingestRecap", recapNode)
     .addNode("out_of_scope", outOfScope)
     .addNode("clarify", clarify)
     .addConditionalEdges(START, routeStart, {
@@ -172,7 +180,7 @@ export function buildRouterGraph(checkpointer?: BaseCheckpointSaver) {
     })
     .addConditionalEdges("classify", routeOnIntent, {
       revise: "resolveLesson",
-      ingest: "ingest",
+      ingest: "ingestParse",
       out_of_scope: "out_of_scope",
       clarify: "clarify",
     })
@@ -192,9 +200,14 @@ export function buildRouterGraph(checkpointer?: BaseCheckpointSaver) {
       socratic: "socratic",
       finish: "finish",
     })
+    .addConditionalEdges("ingestParse", afterParse, {
+      ingestPersist: "ingestPersist",
+      [END]: END,
+    })
+    .addEdge("ingestPersist", "ingestRecap")
+    .addEdge("ingestRecap", END)
     .addEdge("socratic", END)
     .addEdge("finish", END)
-    .addEdge("ingest", END)
     .addEdge("out_of_scope", END)
     .addEdge("clarify", END)
     .compile({ checkpointer });

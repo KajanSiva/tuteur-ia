@@ -56,8 +56,26 @@ model Lesson {
 
   concepts      Concept[]
   sessionTraces SessionTrace[]
+  sourceImages  LessonSourceImage[]
 
   @@map("lesson")
+}
+
+// Source images of an ingested lesson, persisted to a local volume (path only
+// in the DB). Order preserved by ordinal. Enables re-ingestion without
+// re-photographing, extraction debugging, and deterministic replay for eval.
+model LessonSourceImage {
+  id        String   @id @default(uuid(7)) @db.Uuid
+  lessonId  String   @map("lesson_id") @db.Uuid
+  path      String
+  mediaType String   @map("media_type")
+  ordinal   Int
+  createdAt DateTime @default(now()) @map("created_at")
+
+  lesson Lesson @relation(fields: [lessonId], references: [id], onDelete: Cascade)
+
+  @@unique([lessonId, ordinal])
+  @@map("lesson_source_image")
 }
 
 // Teachable unit extracted from a lesson — the "denominator" of a lesson.

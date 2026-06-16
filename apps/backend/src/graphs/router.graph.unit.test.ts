@@ -15,7 +15,9 @@ describe("buildRouterGraph", () => {
       "evaluate",
       "advance",
       "finish",
-      "ingest",
+      "ingestParse",
+      "ingestPersist",
+      "ingestRecap",
       "out_of_scope",
       "clarify",
     ]) {
