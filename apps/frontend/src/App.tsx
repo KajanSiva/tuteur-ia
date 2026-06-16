@@ -2,7 +2,12 @@ import type { ChangeEvent, FormEvent } from "react";
 import { useEffect, useRef, useState } from "react";
 import { useChat } from "@ai-sdk/react";
 import { DefaultChatTransport } from "ai";
-import type { ActionCommand, ChipAction, TutorUIMessage } from "@tuteur/shared";
+import type {
+  ActionCommand,
+  ChipAction,
+  ConfirmOverwrite,
+  TutorUIMessage,
+} from "@tuteur/shared";
 import { ImagePlus, Loader2, Send, Sparkles, X } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -33,6 +38,18 @@ function actionsOf(data: unknown): ChipAction[] {
     return data.actions as ChipAction[];
   }
   return [];
+}
+
+function confirmOf(data: unknown): ConfirmOverwrite | null {
+  if (
+    data &&
+    typeof data === "object" &&
+    "kind" in data &&
+    data.kind === "confirm_overwrite"
+  ) {
+    return data as ConfirmOverwrite;
+  }
+  return null;
 }
 
 function loadImage(file: File): Promise<HTMLImageElement> {
@@ -122,16 +139,18 @@ export default function App() {
     setImages((current) => current.filter((_, i) => i !== index));
   }
 
-  // A chip dispatches a structured command — never free text the router would
-  // re-classify. add_lesson is a pure front action (open the picker);
-  // revise_lesson round-trips with the command in the request body.
-  function runCommand(command: ActionCommand) {
+  // A chip or confirm option dispatches a structured command — never free text
+  // the router would re-classify. add_lesson is a pure front action (open the
+  // picker); everything else round-trips with the command in the request body
+  // (revise_lesson enters revise; resume_overwrite answers a pending interrupt).
+  // The label doubles as the user-facing bubble text.
+  function dispatch(command: ActionCommand, label: string) {
     if (busy) return;
     if (command.kind === "add_lesson") {
       fileInput.current?.click();
       return;
     }
-    void sendMessage({ text: "Réviser cette leçon" }, { body: { command } });
+    void sendMessage({ text: label }, { body: { command } });
   }
 
   // Show a waiting indicator while a reply is pending and no assistant text has
@@ -146,10 +165,16 @@ export default function App() {
     );
   const showThinking = busy && !assistantTextStreaming;
 
+  // A pending hard-gate confirmation blocks free input (brief §5.5): the child
+  // must answer it via the card, not by typing.
+  const awaitingConfirm =
+    lastMessage?.parts.some((part) => part.type === "data-confirm") ?? false;
+  const inputBlocked = busy || awaitingConfirm;
+
   async function submit(event: FormEvent) {
     event.preventDefault();
     const typed = input.trim();
-    if ((!typed && images.length === 0) || busy) return;
+    if ((!typed && images.length === 0) || inputBlocked) return;
 
     const text = typed || DEFAULT_INGEST_TEXT;
     const files = await Promise.all(images.map(downscaleToFilePart));
@@ -213,11 +238,46 @@ export default function App() {
                         variant="secondary"
                         size="sm"
                         disabled={busy || !isLast}
-                        onClick={() => runCommand(action.command)}
+                        onClick={() => dispatch(action.command, action.label)}
                       >
                         {action.label}
                       </Button>
                     ))}
+                  </div>
+                ) : null;
+              }
+              case "data-confirm": {
+                const confirm = confirmOf(part.data);
+                return confirm ? (
+                  <div
+                    key={key}
+                    className="flex flex-col gap-3 rounded-3xl border border-border bg-card p-4 shadow-sm"
+                  >
+                    <p className="text-sm text-card-foreground">
+                      Tu as déjà une leçon «&nbsp;{confirm.title}&nbsp;». Que veux-tu
+                      faire ?
+                    </p>
+                    <div className="flex flex-wrap gap-2">
+                      {confirm.options.map((option, i) => (
+                        <Button
+                          key={`${key}-${i}`}
+                          type="button"
+                          variant={
+                            option.choice === "cancel" ? "ghost" : "secondary"
+                          }
+                          size="sm"
+                          disabled={busy || !isLast}
+                          onClick={() =>
+                            dispatch(
+                              { kind: "resume_overwrite", choice: option.choice },
+                              option.label,
+                            )
+                          }
+                        >
+                          {option.label}
+                        </Button>
+                      ))}
+                    </div>
                   </div>
                 ) : null;
               }
@@ -278,7 +338,7 @@ export default function App() {
           variant="ghost"
           size="icon"
           onClick={() => fileInput.current?.click()}
-          disabled={busy}
+          disabled={inputBlocked}
           aria-label="Ajouter une photo de leçon"
         >
           <ImagePlus />
@@ -286,10 +346,17 @@ export default function App() {
         <Input
           value={input}
           onChange={(event) => setInput(event.target.value)}
-          placeholder="Écris un message…"
-          disabled={busy}
+          placeholder={
+            awaitingConfirm ? "Choisis une option ci-dessus…" : "Écris un message…"
+          }
+          disabled={inputBlocked}
         />
-        <Button type="submit" size="icon" disabled={busy} aria-label="Envoyer">
+        <Button
+          type="submit"
+          size="icon"
+          disabled={inputBlocked}
+          aria-label="Envoyer"
+        >
           <Send />
         </Button>
       </form>
