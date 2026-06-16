@@ -5,6 +5,7 @@ import {
   SystemMessage,
 } from "@langchain/core/messages";
 import { END, type LangGraphRunnableConfig } from "@langchain/langgraph";
+import type { ChipAction } from "@tuteur/shared";
 import { z } from "zod";
 
 import { prisma } from "../db/client.js";
@@ -68,10 +69,12 @@ function toExtractedLesson(parsed: ParsedLesson): ExtractedLesson {
   };
 }
 
-// The slice of graph state the ingest flow reads and writes.
+// The slice of graph state the ingest flow reads and writes. ingestedLessonId is
+// set by persist so the recap can offer a "revise this lesson" chip.
 export type IngestState = {
   messages: BaseMessage[];
   pendingIngestion: ExtractedLesson | null;
+  ingestedLessonId: string | null;
 };
 
 // Pulls the source images back out of the multimodal message blocks. toBaseMessages
@@ -181,8 +184,17 @@ export async function persistDraftNode(
     return {};
   }
   const images = extractSourceImages(state.messages);
-  await persistDraftLesson(state.pendingIngestion, images);
-  return {};
+  const { lessonId } = await persistDraftLesson(state.pendingIngestion, images);
+  return { ingestedLessonId: lessonId };
+}
+
+// The recap's bounded next-steps, as structured chip commands (brief §17). The
+// natural action after ingesting is to revise the lesson just added.
+export function buildRecapActions(lessonId: string): ChipAction[] {
+  return [
+    { label: "Réviser cette leçon", command: { kind: "revise_lesson", lessonId } },
+    { label: "Ajouter une autre leçon", command: { kind: "add_lesson" } },
+  ];
 }
 
 // The tutor role for the recap: a warm, child-facing confirmation. It is a
@@ -220,6 +232,7 @@ export function buildRecapInput(extracted: ExtractedLesson): string {
 // state and clears it so the next turn re-enters cleanly through the router.
 export async function recapNode(
   state: IngestState,
+  config: LangGraphRunnableConfig,
 ): Promise<Partial<IngestState>> {
   const extracted = state.pendingIngestion;
   if (!extracted) {
@@ -233,5 +246,15 @@ export async function recapNode(
     new SystemMessage(buildRecapSystem(student.displayName)),
     new HumanMessage(buildRecapInput(extracted)),
   ]);
-  return { messages: [response], pendingIngestion: null };
+
+  // After the prose, surface the bounded next-steps as persisted chips (an id →
+  // kept in the message). Emitted on the custom stream → `data-actions` part.
+  if (state.ingestedLessonId) {
+    config.writer?.({
+      type: "actions",
+      id: `actions-${state.ingestedLessonId}`,
+      actions: buildRecapActions(state.ingestedLessonId),
+    });
+  }
+  return { messages: [response], pendingIngestion: null, ingestedLessonId: null };
 }

@@ -57,6 +57,9 @@ export type ReviseState = {
   reviseActive: boolean;
   masterySignal: MasterySignal | null;
   sessionTraceId: string | null;
+  // Set by a "revise this lesson" chip command: enter revise directly on this
+  // lesson, bypassing classify and the resolver. Consumed and cleared by hydrate.
+  enterReviseLessonId: string | null;
 };
 
 // Provenance tag stamped on every mastery row this flow writes.
@@ -221,6 +224,7 @@ export async function hydrateNode(
     reviseActive: true,
     masterySignal: null,
     sessionTraceId,
+    enterReviseLessonId: null,
   };
 }
 
@@ -231,9 +235,15 @@ export async function hydrateNode(
 export function routeStart(state: {
   reviseActive?: boolean;
   pendingLessonChoice?: boolean;
-}): "classify" | "evaluate" | "resolveLesson" {
+  enterReviseLessonId?: string | null;
+}): "classify" | "evaluate" | "resolveLesson" | "revise" {
   if (state.reviseActive) {
     return "evaluate";
+  }
+  // A chip dropped us straight into revise on a known lesson (no classify, no
+  // resolver). Checked after reviseActive so a stale value can't loop a session.
+  if (state.enterReviseLessonId) {
+    return "revise";
   }
   if (state.pendingLessonChoice) {
     return "resolveLesson";

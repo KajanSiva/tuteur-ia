@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 import type { ExtractedLesson } from "../memory/lesson-ingest.js";
 import {
   afterParse,
+  buildRecapActions,
   buildRecapInput,
   buildRecapSystem,
   extractSourceImages,
@@ -66,13 +67,15 @@ describe("afterParse", () => {
   };
 
   it("proceeds to persistence on a successful extraction", () => {
-    expect(afterParse({ messages: [], pendingIngestion: lesson })).toBe(
-      "ingestPersist",
-    );
+    expect(
+      afterParse({ messages: [], pendingIngestion: lesson, ingestedLessonId: null }),
+    ).toBe("ingestPersist");
   });
 
   it("ends the turn when nothing was extracted", () => {
-    expect(afterParse({ messages: [], pendingIngestion: null })).toBe(END);
+    expect(
+      afterParse({ messages: [], pendingIngestion: null, ingestedLessonId: null }),
+    ).toBe(END);
   });
 });
 
@@ -97,5 +100,18 @@ describe("recap prompts", () => {
     expect(input).toContain("La Révolution");
     expect(input).toContain("1789");
     expect(input).toContain("Bastille");
+  });
+});
+
+describe("buildRecapActions", () => {
+  it("offers revising the just-ingested lesson (carrying its id) and adding another", () => {
+    const actions = buildRecapActions("lesson-42");
+    expect(actions).toEqual([
+      {
+        label: "Réviser cette leçon",
+        command: { kind: "revise_lesson", lessonId: "lesson-42" },
+      },
+      { label: "Ajouter une autre leçon", command: { kind: "add_lesson" } },
+    ]);
   });
 });

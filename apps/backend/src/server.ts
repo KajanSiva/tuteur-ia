@@ -28,11 +28,19 @@ await app.register(cors, { origin: true });
 
 const router = buildRouterGraph(await createCheckpointer());
 
+// A structured command a chip dispatches (sent in the request body, not as free
+// text). Only revise_lesson round-trips here; add_lesson is handled on the front.
+const CommandSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("revise_lesson"), lessonId: z.string() }),
+  z.object({ kind: z.literal("add_lesson") }),
+]);
+
 // Envelope of a useChat request. The messages array is validated deeply by
 // validateUIMessages below; here we only assert the transport shape.
 const ChatBodySchema = z.object({
   id: z.string().optional(),
   messages: z.array(z.unknown()),
+  command: CommandSchema.optional(),
 });
 
 app.get("/health", async () => ({ status: "ok", intents: INTENTS }));
@@ -58,11 +66,23 @@ app.post("/api/chat", async (request, reply) => {
   }
   const messages = await toBaseMessages([latest]);
 
+  // A revise_lesson chip command seeds the revise session directly: the lesson is
+  // already known, so we set it and the entry flag — routeStart sends the turn
+  // straight to revise (hydrate), bypassing classify and the resolver (brief §17).
+  const command = parsed.data.command;
+  const input: {
+    messages: typeof messages;
+    lessonId?: string;
+    enterReviseLessonId?: string;
+  } = { messages };
+  if (command?.kind === "revise_lesson") {
+    input.lessonId = command.lessonId;
+    input.enterReviseLessonId = command.lessonId;
+  }
+
   const stream = createUIMessageStream({
     execute: async ({ writer }) => {
-      const graphStream = await router.stream(
-        { messages },
-        {
+      const graphStream = await router.stream(input, {
           // "custom" carries non-prose data parts (progress, …) emitted by nodes
           // via config.writer; the adapter maps them to `data-*` UI parts.
           streamMode: ["messages", "values", "custom"],

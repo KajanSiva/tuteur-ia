@@ -28,6 +28,7 @@ function reviseState(over: Partial<ReviseState> = {}): ReviseState {
     reviseActive: true,
     masterySignal: null,
     sessionTraceId: "trace-1",
+    enterReviseLessonId: null,
     ...over,
   };
 }
@@ -159,6 +160,16 @@ describe("routeStart", () => {
     expect(routeStart({ reviseActive: true, pendingLessonChoice: true })).toBe(
       "evaluate",
     );
+  });
+
+  it("enters revise directly when a chip command set the lesson", () => {
+    expect(routeStart({ enterReviseLessonId: "lesson-1" })).toBe("revise");
+  });
+
+  it("lets an active session take precedence over a stale chip entry", () => {
+    expect(
+      routeStart({ reviseActive: true, enterReviseLessonId: "lesson-1" }),
+    ).toBe("evaluate");
   });
 
   it("routes to classify when no flow is active", () => {

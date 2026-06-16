@@ -86,6 +86,14 @@ export const RouterState = Annotation.Root({
     reducer: (_, next) => next,
     default: () => null,
   }),
+  ingestedLessonId: Annotation<string | null>({
+    reducer: (_, next) => next,
+    default: () => null,
+  }),
+  enterReviseLessonId: Annotation<string | null>({
+    reducer: (_, next) => next,
+    default: () => null,
+  }),
 });
 
 const CLASSIFY_SYSTEM = `Tu es le routeur d'intention d'un tuteur scolaire (CM2, Histoire).
@@ -177,6 +185,7 @@ export function buildRouterGraph(checkpointer?: BaseCheckpointSaver) {
       classify: "classify",
       evaluate: "evaluate",
       resolveLesson: "resolveLesson",
+      revise: "revise",
     })
     .addConditionalEdges("classify", routeOnIntent, {
       revise: "resolveLesson",

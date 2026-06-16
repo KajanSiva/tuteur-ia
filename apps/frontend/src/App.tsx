@@ -2,7 +2,7 @@ import type { ChangeEvent, FormEvent } from "react";
 import { useEffect, useRef, useState } from "react";
 import { useChat } from "@ai-sdk/react";
 import { DefaultChatTransport } from "ai";
-import type { TutorUIMessage } from "@tuteur/shared";
+import type { ActionCommand, ChipAction, TutorUIMessage } from "@tuteur/shared";
 import { ImagePlus, Loader2, Send, Sparkles, X } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -21,6 +21,19 @@ const DEFAULT_INGEST_TEXT = "Voici une nouvelle leçon, peux-tu la prendre en co
 // — keeping payloads small (well under the body limit) and vision tokens cheap.
 const MAX_IMAGE_EDGE = 1568;
 const JPEG_QUALITY = 0.85;
+
+// The backend ships its own data shapes; validate the array shape before use.
+function actionsOf(data: unknown): ChipAction[] {
+  if (
+    data &&
+    typeof data === "object" &&
+    "actions" in data &&
+    Array.isArray(data.actions)
+  ) {
+    return data.actions as ChipAction[];
+  }
+  return [];
+}
 
 function loadImage(file: File): Promise<HTMLImageElement> {
   return new Promise((resolve, reject) => {
@@ -97,6 +110,18 @@ export default function App() {
     setImages((current) => current.filter((_, i) => i !== index));
   }
 
+  // A chip dispatches a structured command — never free text the router would
+  // re-classify. add_lesson is a pure front action (open the picker);
+  // revise_lesson round-trips with the command in the request body.
+  function runCommand(command: ActionCommand) {
+    if (busy) return;
+    if (command.kind === "add_lesson") {
+      fileInput.current?.click();
+      return;
+    }
+    void sendMessage({ text: "Réviser cette leçon" }, { body: { command } });
+  }
+
   async function submit(event: FormEvent) {
     event.preventDefault();
     const typed = input.trim();
@@ -149,6 +174,25 @@ export default function App() {
                     />
                   </div>
                 ) : null;
+              case "data-actions": {
+                const actions = actionsOf(part.data);
+                return actions.length > 0 ? (
+                  <div key={key} className="flex flex-wrap justify-start gap-2">
+                    {actions.map((action, i) => (
+                      <Button
+                        key={`${key}-${i}`}
+                        type="button"
+                        variant="secondary"
+                        size="sm"
+                        disabled={busy}
+                        onClick={() => runCommand(action.command)}
+                      >
+                        {action.label}
+                      </Button>
+                    ))}
+                  </div>
+                ) : null;
+              }
               default:
                 return null;
             }
