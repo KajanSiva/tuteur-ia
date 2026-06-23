@@ -9,6 +9,10 @@ In practice everything happens in **a single chat**: the student opens the app a
 says "let's review lesson 13" or "I got a new lesson, take it into account," and the
 system routes, questions, assesses, and remembers.
 
+![](ai-tutor.png)
+
+*A real review session — the tutor clarifies which lesson, then guides instead of handing over the answer.*
+
 > **Status:** proof of concept. The goal isn't a finished product but to demonstrate
 > a **reliable agentic architecture**. Working conventions are in
 > [CLAUDE.md](CLAUDE.md).
