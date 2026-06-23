@@ -1,8 +1,8 @@
 # tuteur-ia
 
-Socratic AI tutor (CM2 / History) with compounding memory. **Design source of
-truth: [AGENT-BRIEF.md](AGENT-BRIEF.md)** — read it before non-trivial work.
-This file only holds working conventions, not the design.
+Socratic AI tutor (CM2 / History) with compounding memory. See the
+[README](README.md) for the project overview. This file holds working
+conventions.
 
 ## Stack
 
