@@ -254,11 +254,11 @@ describe("decideAfterAdvance", () => {
     expect(decideAfterAdvance(state)).toBe("socratic");
   });
 
-  it("finishes once the cursor passes the last concept", () => {
+  it("hands off to the end-of-session analysis once the cursor passes the last concept", () => {
     const state = reviseState({
       sessionConceptIds: ["c1", "c2"],
       conceptCursor: 2,
     });
-    expect(decideAfterAdvance(state)).toBe("finish");
+    expect(decideAfterAdvance(state)).toBe("analyze");
   });
 });

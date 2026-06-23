@@ -365,10 +365,12 @@ export async function advanceNode(
 }
 
 // Deterministic decision after advancing: more concepts left → keep going,
-// otherwise the session is done.
-export function decideAfterAdvance(state: ReviseState): "socratic" | "finish" {
+// otherwise the session is over — hand off to the end-of-session analysis
+// (which refines the profile) before the closing message. The empty-session
+// path (afterHydrate → finish) skips analysis: nothing was revised.
+export function decideAfterAdvance(state: ReviseState): "socratic" | "analyze" {
   const queue = state.sessionConceptIds ?? [];
-  return state.conceptCursor >= queue.length ? "finish" : "socratic";
+  return state.conceptCursor >= queue.length ? "analyze" : "socratic";
 }
 
 // Closes the session: a final encouragement and a reset of the session state so

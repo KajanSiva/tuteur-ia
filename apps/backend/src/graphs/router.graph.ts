@@ -26,6 +26,7 @@ import {
 import { IntentSchema, routeOnIntent } from "./intent.js";
 import { afterResolveLesson, resolveLessonNode } from "./lesson-resolver.js";
 import type { RoutingPhase } from "./phase.js";
+import { analyzeSessionNode } from "./session-analysis.js";
 import {
   advanceNode,
   afterHydrate,
@@ -170,7 +171,7 @@ async function clarify() {
 // single routing phase, skipping classify when a flow is in progress. classify
 // (the only router LLM call) routes by intent. The revise loop is run-to-END +
 // re-invoke per message: one POST = one dialogue turn.
-//   START ─ phase ─ revising        → evaluate ─ decide ─ advance ─ socratic/finish
+//   START ─ phase ─ revising        → evaluate ─ decide ─ advance ─ socratic / analyze→finish
 //          ├ choosing_lesson → resolveLesson (the student's lesson answer)
 //          ├ entering_revise → revise (a chip set the lesson)
 //          └ idle           → classify → { revise → resolveLesson | ingest | … }
@@ -185,6 +186,7 @@ export function buildRouterGraph(checkpointer?: BaseCheckpointSaver) {
     .addNode("socratic", socraticNode)
     .addNode("evaluate", evaluateNode)
     .addNode("advance", advanceNode)
+    .addNode("analyze", analyzeSessionNode)
     .addNode("finish", finishNode)
     .addNode("ingestParse", parseLessonNode)
     .addNode("ingestDetect", detectCollisionNode)
@@ -220,7 +222,7 @@ export function buildRouterGraph(checkpointer?: BaseCheckpointSaver) {
     })
     .addConditionalEdges("advance", decideAfterAdvance, {
       socratic: "socratic",
-      finish: "finish",
+      analyze: "analyze",
     })
     .addConditionalEdges("ingestParse", afterParse, {
       ingestDetect: "ingestDetect",
@@ -237,6 +239,7 @@ export function buildRouterGraph(checkpointer?: BaseCheckpointSaver) {
     .addEdge("ingestPersist", "ingestRecap")
     .addEdge("ingestRecap", END)
     .addEdge("ingestCancel", END)
+    .addEdge("analyze", "finish")
     .addEdge("socratic", END)
     .addEdge("finish", END)
     .addEdge("out_of_scope", END)

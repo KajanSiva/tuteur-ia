@@ -14,6 +14,7 @@ describe("buildRouterGraph", () => {
       "socratic",
       "evaluate",
       "advance",
+      "analyze",
       "finish",
       "ingestParse",
       "ingestDetect",
