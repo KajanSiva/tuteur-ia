@@ -345,6 +345,7 @@ export default function App() {
           type="button"
           variant="ghost"
           size="icon"
+          className="shrink-0 rounded-2xl"
           onClick={() => fileInput.current?.click()}
           disabled={inputBlocked}
           aria-label="Ajouter une photo de leçon"
@@ -362,6 +363,7 @@ export default function App() {
         <Button
           type="submit"
           size="icon"
+          className="shrink-0 rounded-2xl"
           disabled={inputBlocked}
           aria-label="Envoyer"
         >
