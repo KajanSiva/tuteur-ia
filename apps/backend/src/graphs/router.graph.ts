@@ -106,10 +106,10 @@ export const RouterState = Annotation.Root({
   }),
 });
 
-const CLASSIFY_SYSTEM = `Tu es le routeur d'intention d'un tuteur scolaire (CM2, Histoire).
+const CLASSIFY_SYSTEM = `Tu es le routeur d'intention d'un tuteur scolaire.
 Classe le DERNIER message de l'élève dans exactement une intention :
-- "revise" : elle veut réviser / être interrogée sur une leçon.
-- "ingest" : elle veut ajouter ou transmettre une nouvelle leçon.
+- "revise" : l'élève veut réviser / être interrogé sur une leçon.
+- "ingest" : l'élève veut ajouter ou transmettre une nouvelle leçon.
 - "out_of_scope" : tout le reste (question hors leçon, bavardage, hors cadre scolaire).
 Donne aussi une confidence entre 0 et 1.`;
 
@@ -151,7 +151,7 @@ async function outOfScope() {
   return {
     messages: [
       new AIMessage(
-        "Je t'aide à réviser tes leçons d'histoire. On reprend ? Dis-moi quelle leçon tu veux travailler.",
+        "Je t'aide à réviser tes leçons. On reprend ? Dis-moi quelle leçon tu veux travailler.",
       ),
     ],
   };

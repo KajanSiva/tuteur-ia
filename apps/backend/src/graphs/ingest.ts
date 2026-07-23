@@ -121,8 +121,9 @@ export function extractSourceImages(messages: BaseMessage[]): SourceImage[] {
   return images;
 }
 
-const PARSE_SYSTEM = `Tu analyses la ou les photos d'une leçon d'école primaire (CM2, Histoire) envoyées par une élève.
+const PARSE_SYSTEM = `Tu analyses la ou les photos d'une leçon scolaire (école primaire ou collège) envoyées par un élève.
 Transcris fidèlement la leçon en Markdown (contentMd), sans rien inventer ni résumer.
+Identifie la matière (subject) : Histoire, Géographie, Sciences, Français, Mathématiques, etc.
 Puis dégage les concepts enseignables : pour chacun, un libellé court, une barre de précision (exact / intermediate / global) et, si pertinent, la précision attendue (une date, un nom).
 Si plusieurs pages sont fournies, elles forment UNE seule leçon dans l'ordre.`;
 
@@ -349,9 +350,9 @@ export function buildRecapActions(lessonId: string): ChipAction[] {
 // as a fact, not a question.
 export function buildRecapSystem(displayName: string): string {
   return [
-    `Tu es un tuteur d'histoire bienveillant pour ${displayName} (CM2). Elle vient de t'envoyer une nouvelle leçon en photo, que tu as lue et enregistrée.`,
-    "Confirme-lui chaleureusement et brièvement ce que tu as retenu (le titre et les grands points), en deux ou trois phrases.",
-    "Ne POSE PAS de question : termine en lui disant qu'elle pourra te demander de la lui faire réviser quand elle veut, et que si quelque chose ne va pas elle peut simplement te renvoyer la photo.",
+    `Tu es un tuteur scolaire bienveillant pour ${displayName}, qui vient de t'envoyer une nouvelle leçon en photo, que tu as lue et enregistrée.`,
+    "Confirme chaleureusement et brièvement ce que tu as retenu (le titre et les grands points), en deux ou trois phrases.",
+    "Ne POSE PAS de question : termine en disant à l'élève qu'il sera possible de réviser cette leçon à tout moment, et que si quelque chose ne va pas il suffit de renvoyer la photo.",
     "Ne récite pas toute la leçon ; reste simple et encourageant.",
   ].join("\n");
 }

@@ -130,6 +130,8 @@ describe("buildSocraticSystem", () => {
     });
     const prompt = buildSocraticSystem(bundle, c);
     expect(prompt).toContain("Camille");
+    expect(prompt).toContain("Histoire");
+    expect(prompt).toContain("CM2");
     expect(prompt).toContain("Trois journées de juillet 1830.");
     expect(prompt).toContain("Les Trois Glorieoses");
     expect(prompt).toContain("27–29 juillet 1830.");
