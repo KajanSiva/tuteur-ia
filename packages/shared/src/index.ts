@@ -46,3 +46,39 @@ export type TutorDataParts = {
 
 // Central app message type for useChat and the streaming seam.
 export type TutorUIMessage = UIMessage<unknown, TutorDataParts>;
+
+// --- Auth & family-admin contracts -----------------------------------------
+
+export type AuthRole = "parent" | "child";
+
+// The signed-in identity as the API reports it. gradeLevel is present for
+// children only (it calibrates the tutor).
+export type AuthUser = {
+  role: AuthRole;
+  id: string;
+  displayName: string;
+  gradeLevel?: string;
+};
+
+// initialized = a parent account exists; false drives the onboarding flow.
+export type AuthState = { initialized: boolean; user: AuthUser | null };
+
+// Per-lesson mastery rollup for the parent view. Unseen concepts are the
+// remainder: conceptCount - secureCount - inProgressCount.
+export type LessonOverview = {
+  id: string;
+  title: string;
+  subject: string;
+  conceptCount: number;
+  secureCount: number;
+  inProgressCount: number;
+};
+
+export type ChildOverview = {
+  id: string;
+  displayName: string;
+  username: string;
+  gradeLevel: string;
+  age: number | null;
+  lessons: LessonOverview[];
+};
