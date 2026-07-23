@@ -1,9 +1,15 @@
 # Tuteur IA — a Socratic tutor with compounding memory
 
-A **Socratic** AI tutor that helps a student (5th grade, History) reason their way
-to understanding instead of being handed the answer. What sets it apart is a
-**memory that compounds session after session** — a model of the student that is
-re-read and rewritten on every review, so the tutoring gets better over time.
+A **Socratic** AI tutor that helps a student reason their way to understanding
+instead of being handed the answer. What sets it apart is a **memory that
+compounds session after session** — a model of the student that is re-read and
+rewritten on every review, so the tutoring gets better over time.
+
+Built for family use: a parent account administers the install and creates one
+account per child (own login, own grade level); each child has their own lesson
+corpus, any school subject, and their own persistent tutoring session. A parent
+view shows, per child and per lesson, which concepts are mastered vs in
+progress.
 
 In practice everything happens in **a single chat**: the student opens the app and
 says "let's review lesson 13" or "I got a new lesson, take it into account," and the
