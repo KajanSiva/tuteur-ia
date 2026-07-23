@@ -4,11 +4,12 @@ import { useChat } from "@ai-sdk/react";
 import { DefaultChatTransport } from "ai";
 import type {
   ActionCommand,
+  AuthUser,
   ChipAction,
   ConfirmOverwrite,
   TutorUIMessage,
 } from "@tuteur/shared";
-import { ImagePlus, Loader2, Send, Sparkles, X } from "lucide-react";
+import { ImagePlus, Loader2, LogOut, Send, Sparkles, X } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -101,7 +102,13 @@ function ThinkingDots() {
   );
 }
 
-export default function App() {
+export default function App({
+  user,
+  onLogout,
+}: {
+  user: AuthUser;
+  onLogout: () => void;
+}) {
   const [progress, setProgress] = useState<string | null>(null);
   const { messages, sendMessage, status } = useChat<TutorUIMessage>({
     transport,
@@ -197,14 +204,23 @@ export default function App() {
         <span className="flex size-11 items-center justify-center rounded-2xl bg-primary text-primary-foreground shadow-sm">
           <Sparkles className="size-5" />
         </span>
-        <div>
+        <div className="flex-1">
           <h1 className="font-display text-2xl font-semibold tracking-tight">
             Tuteur IA
           </h1>
           <p className="text-sm text-muted-foreground">
-            Révise tes leçons, à ton rythme.
+            Salut {user.displayName} — révise tes leçons, à ton rythme.
           </p>
         </div>
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon"
+          onClick={onLogout}
+          aria-label="Se déconnecter"
+        >
+          <LogOut />
+        </Button>
       </header>
 
       <div className="flex-1 space-y-3 overflow-y-auto py-2 pr-3">
