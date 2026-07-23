@@ -1,12 +1,20 @@
-import { afterAll, afterEach, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 
+import {
+  CONCEPT_WATERLOO,
+  provisionLesson,
+  provisionStudent,
+  TEST_LESSON_CONCEPT_COUNT,
+  TEST_LESSON_ID,
+  TEST_STUDENT_ID,
+} from "../../test/fixtures.js";
 import { prisma } from "../db/client.js";
 import { hydrateForRevision } from "./hydration.js";
 import { getUnassessedConcepts } from "./repositories.js";
 
-const STUDENT = "10000000-0000-4000-8000-000000000001";
-const LESSON_11 = "11111111-1111-4111-8111-111111111111";
-const CONCEPT_WATERLOO = "11111111-1111-4111-8111-000000000101";
+beforeAll(async () => {
+  await provisionLesson();
+});
 
 afterEach(async () => {
   await prisma.mastery.deleteMany();
@@ -19,18 +27,18 @@ afterAll(async () => {
 
 describe("hydrateForRevision", () => {
   it("returns the lesson with all concepts unknown for a fresh student", async () => {
-    const bundle = await hydrateForRevision(STUDENT, LESSON_11);
+    const bundle = await hydrateForRevision(TEST_STUDENT_ID, TEST_LESSON_ID);
 
-    expect(bundle.student.displayName).toBe("Camille");
+    expect(bundle.student.displayName).toBe("Alex");
     expect(bundle.profile).toBeNull();
     expect(bundle.lesson.contentMd.length).toBeGreaterThan(0);
-    expect(bundle.concepts).toHaveLength(9);
+    expect(bundle.concepts).toHaveLength(TEST_LESSON_CONCEPT_COUNT);
     expect(bundle.concepts.every((c) => c.mastery === null)).toBe(true);
-    expect(bundle.unassessedConceptIds).toHaveLength(9);
+    expect(bundle.unassessedConceptIds).toHaveLength(TEST_LESSON_CONCEPT_COUNT);
   });
 
   it("carries each concept's precision bar through the bundle", async () => {
-    const bundle = await hydrateForRevision(STUDENT, LESSON_11);
+    const bundle = await hydrateForRevision(TEST_STUDENT_ID, TEST_LESSON_ID);
     const waterloo = bundle.concepts.find((c) => c.id === CONCEPT_WATERLOO);
 
     expect(waterloo?.precisionBar).toBe("exact");
@@ -40,7 +48,7 @@ describe("hydrateForRevision", () => {
   it("overlays mastery on an assessed concept and shrinks the unknown set", async () => {
     await prisma.mastery.create({
       data: {
-        studentId: STUDENT,
+        studentId: TEST_STUDENT_ID,
         conceptId: CONCEPT_WATERLOO,
         level: "secure",
         rationale: "connaît la date exacte",
@@ -48,25 +56,25 @@ describe("hydrateForRevision", () => {
       },
     });
 
-    const bundle = await hydrateForRevision(STUDENT, LESSON_11);
+    const bundle = await hydrateForRevision(TEST_STUDENT_ID, TEST_LESSON_ID);
     const waterloo = bundle.concepts.find((c) => c.id === CONCEPT_WATERLOO);
 
     expect(waterloo?.mastery?.level).toBe("secure");
     expect(waterloo?.mastery?.rationale).toBe("connaît la date exacte");
-    expect(bundle.unassessedConceptIds).toHaveLength(8);
+    expect(bundle.unassessedConceptIds).toHaveLength(TEST_LESSON_CONCEPT_COUNT - 1);
     expect(bundle.unassessedConceptIds).not.toContain(CONCEPT_WATERLOO);
   });
 
   it("maps the pedagogical profile when one exists", async () => {
     await prisma.studentProfile.create({
       data: {
-        studentId: STUDENT,
+        studentId: TEST_STUDENT_ID,
         learningStyle: "questions courtes, une à la fois",
         changedBy: "test",
       },
     });
 
-    const bundle = await hydrateForRevision(STUDENT, LESSON_11);
+    const bundle = await hydrateForRevision(TEST_STUDENT_ID, TEST_LESSON_ID);
 
     expect(bundle.profile?.learningStyle).toBe("questions courtes, une à la fois");
     expect(bundle.profile?.motivationLevers).toBeNull();
@@ -74,35 +82,57 @@ describe("hydrateForRevision", () => {
 
   it("throws for an unknown lesson", async () => {
     await expect(
-      hydrateForRevision(STUDENT, "00000000-0000-4000-8000-0000000000ff"),
+      hydrateForRevision(TEST_STUDENT_ID, "00000000-0000-4000-8000-0000000000ff"),
     ).rejects.toThrow(/Unknown lesson/);
   });
 
   it("throws for an unknown student", async () => {
     await expect(
-      hydrateForRevision("00000000-0000-4000-8000-0000000000ff", LESSON_11),
+      hydrateForRevision("00000000-0000-4000-8000-0000000000ff", TEST_LESSON_ID),
     ).rejects.toThrow(/Unknown student/);
+  });
+
+  it("treats another student's lesson as unknown", async () => {
+    const other = await prisma.student.create({
+      data: {
+        displayName: "Sam",
+        username: `sam-${crypto.randomUUID()}`,
+        passwordHash: "not-a-real-hash",
+        gradeLevel: "6ème",
+      },
+    });
+    try {
+      await expect(
+        hydrateForRevision(other.id, TEST_LESSON_ID),
+      ).rejects.toThrow(/Unknown lesson/);
+    } finally {
+      await prisma.student.delete({ where: { id: other.id } });
+    }
   });
 });
 
 describe("getUnassessedConcepts", () => {
+  beforeAll(async () => {
+    await provisionStudent();
+  });
+
   it("returns every concept of the lesson for a fresh student", async () => {
-    const rows = await getUnassessedConcepts(STUDENT, LESSON_11);
-    expect(rows).toHaveLength(9);
+    const rows = await getUnassessedConcepts(TEST_STUDENT_ID, TEST_LESSON_ID);
+    expect(rows).toHaveLength(TEST_LESSON_CONCEPT_COUNT);
   });
 
   it("excludes a concept once it has a mastery row", async () => {
     await prisma.mastery.create({
       data: {
-        studentId: STUDENT,
+        studentId: TEST_STUDENT_ID,
         conceptId: CONCEPT_WATERLOO,
         level: "emerging",
         changedBy: "test",
       },
     });
 
-    const rows = await getUnassessedConcepts(STUDENT, LESSON_11);
-    expect(rows).toHaveLength(8);
+    const rows = await getUnassessedConcepts(TEST_STUDENT_ID, TEST_LESSON_ID);
+    expect(rows).toHaveLength(TEST_LESSON_CONCEPT_COUNT - 1);
     expect(rows.map((r) => r.id)).not.toContain(CONCEPT_WATERLOO);
   });
 });

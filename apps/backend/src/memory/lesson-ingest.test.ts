@@ -4,6 +4,7 @@ import path from "node:path";
 
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 
+import { provisionStudent, TEST_STUDENT_ID } from "../../test/fixtures.js";
 import { prisma } from "../db/client.js";
 import {
   type ExtractedLesson,
@@ -11,20 +12,19 @@ import {
   type SourceImage,
 } from "./lesson-ingest.js";
 
-const SEED_LESSON_IDS = [
-  "11111111-1111-4111-8111-111111111111",
-  "22222222-2222-4222-8222-222222222222",
-];
-
 const UPLOAD_DIR = path.join(tmpdir(), "tuteur-ingest-test");
 
-beforeAll(() => {
+const createdLessonIds: string[] = [];
+
+beforeAll(async () => {
   process.env.INGEST_UPLOAD_DIR = UPLOAD_DIR;
+  await provisionStudent();
 });
 
 afterEach(async () => {
   // Remove only the lessons the test created (cascades to concepts + images).
-  await prisma.lesson.deleteMany({ where: { id: { notIn: SEED_LESSON_IDS } } });
+  await prisma.lesson.deleteMany({ where: { id: { in: createdLessonIds } } });
+  createdLessonIds.length = 0;
 });
 
 afterAll(async () => {
@@ -46,15 +46,22 @@ function lesson(over: Partial<ExtractedLesson> = {}): ExtractedLesson {
   };
 }
 
+async function persist(extracted: ExtractedLesson, images: SourceImage[] = []) {
+  const result = await persistDraftLesson(TEST_STUDENT_ID, extracted, images);
+  createdLessonIds.push(result.lessonId);
+  return result;
+}
+
 describe("persistDraftLesson", () => {
   it("materialises the lesson with its concepts so they become reviewable", async () => {
-    const { lessonId } = await persistDraftLesson(lesson(), []);
+    const { lessonId } = await persist(lesson());
 
     const stored = await prisma.lesson.findUniqueOrThrow({
       where: { id: lessonId },
       include: { concepts: { orderBy: { label: "asc" } } },
     });
     expect(stored.title).toBe("Une nouvelle leçon");
+    expect(stored.studentId).toBe(TEST_STUDENT_ID);
     expect(stored.contentMd).toContain("Contenu transcrit");
     expect(stored.metadata).toEqual({ theme: 7 });
     expect(stored.concepts.map((c) => c.label)).toEqual([
@@ -68,7 +75,7 @@ describe("persistDraftLesson", () => {
   });
 
   it("omits theme metadata when none was extracted", async () => {
-    const { lessonId } = await persistDraftLesson(lesson({ theme: null }), []);
+    const { lessonId } = await persist(lesson({ theme: null }));
     const stored = await prisma.lesson.findUniqueOrThrow({ where: { id: lessonId } });
     expect(stored.metadata).toEqual({});
   });
@@ -78,7 +85,7 @@ describe("persistDraftLesson", () => {
       { mediaType: "image/png", base64: Buffer.from("page-one").toString("base64") },
       { mediaType: "image/jpeg", base64: Buffer.from("page-two").toString("base64") },
     ];
-    const { lessonId } = await persistDraftLesson(lesson(), images);
+    const { lessonId } = await persist(lesson(), images);
 
     const rows = await prisma.lessonSourceImage.findMany({
       where: { lessonId },

@@ -5,7 +5,8 @@ import pg from "pg";
 import { baseDatabaseUrl, testDatabaseUrl, testDbName } from "./db-url.js";
 
 // Provisions a dedicated, isolated test database (created if missing, then
-// migrated and seeded) before the suite runs.
+// migrated) before the suite runs. Test data is created by each test file
+// through test/fixtures.ts.
 export default async function setup() {
   const admin = new pg.Client({ connectionString: baseDatabaseUrl });
   await admin.connect();
@@ -20,5 +21,4 @@ export default async function setup() {
 
   const env = { ...process.env, DATABASE_URL: testDatabaseUrl };
   execSync("pnpm exec prisma migrate deploy", { env, stdio: "inherit" });
-  execSync("pnpm exec tsx prisma/seed.ts", { env, stdio: "inherit" });
 }

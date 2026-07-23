@@ -6,7 +6,6 @@ import {
 import type { LangGraphRunnableConfig } from "@langchain/langgraph";
 import { z } from "zod";
 
-import { prisma } from "../db/client.js";
 import type { PrecisionBar } from "../generated/prisma/enums.js";
 import { getModel } from "../llm/models.js";
 import {
@@ -178,12 +177,6 @@ export function buildEvaluateSystem(
   return lines.filter((line) => line !== null).join("\n");
 }
 
-// The single POC student. Multi-student is out of scope (brief §0: "une élève");
-// the lesson, in contrast, is chosen by the deterministic resolver.
-async function resolveStudent() {
-  return prisma.student.findFirstOrThrow({ orderBy: { createdAt: "asc" } });
-}
-
 // Re-hydrates the session and resolves the concept under the cursor. Hydration
 // is cheap indexed reads and keeps the DB authoritative across turns (mastery
 // written mid-session is reflected); the queue/cursor in state fix the order.
@@ -210,12 +203,13 @@ export async function hydrateNode(
   if (!state.lessonId) {
     throw new Error("revise: hydrate reached without a resolved lesson");
   }
-  const student = await resolveStudent();
-  const bundle = await hydrateForRevision(student.id, state.lessonId);
+  if (!state.studentId) {
+    throw new Error("revise: hydrate reached without a student in state");
+  }
+  const bundle = await hydrateForRevision(state.studentId, state.lessonId);
   const selected = selectConcepts(bundle.concepts, new Date());
-  const sessionTraceId = await startSessionTrace(student.id, state.lessonId);
+  const sessionTraceId = await startSessionTrace(state.studentId, state.lessonId);
   return {
-    studentId: student.id,
     sessionConceptIds: selected.map((c) => c.id),
     conceptCursor: 0,
     turnsOnConcept: 0,

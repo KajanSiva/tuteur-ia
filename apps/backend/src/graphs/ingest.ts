@@ -82,11 +82,13 @@ function toExtractedLesson(parsed: ParsedLesson): ExtractedLesson {
 // overwrite (a re-ingestion of the same lesson), or null when it is new.
 export type IngestCollision = { lessonId: string; title: string };
 
-// The slice of graph state the ingest flow reads and writes. ingestedLessonId is
+// The slice of graph state the ingest flow reads and writes. studentId scopes
+// every read and write to the child who sent the lesson. ingestedLessonId is
 // set by persist so the recap can offer a "revise this lesson" chip. collision +
 // overwriteChoice carry the hard-gate overwrite decision across the interrupt.
 export type IngestState = {
   messages: BaseMessage[];
+  studentId: string | null;
   pendingIngestion: ExtractedLesson | null;
   ingestedLessonId: string | null;
   collision: IngestCollision | null;
@@ -209,7 +211,10 @@ export async function detectCollisionNode(
   if (!extracted) {
     return { collision: null };
   }
-  const lessons = await getLessonsForResolution();
+  if (!state.studentId) {
+    throw new Error("ingest: detect reached without a student in state");
+  }
+  const lessons = await getLessonsForResolution(state.studentId);
   if (lessons.length === 0) {
     return { collision: null };
   }
@@ -326,11 +331,18 @@ export async function persistDraftNode(
   if (!state.pendingIngestion) {
     return {};
   }
+  if (!state.studentId) {
+    throw new Error("ingest: persist reached without a student in state");
+  }
   if (state.overwriteChoice === "replace" && state.collision) {
     await prisma.lesson.delete({ where: { id: state.collision.lessonId } });
   }
   const images = extractSourceImages(state.messages);
-  const { lessonId } = await persistDraftLesson(state.pendingIngestion, images);
+  const { lessonId } = await persistDraftLesson(
+    state.studentId,
+    state.pendingIngestion,
+    images,
+  );
   return { ingestedLessonId: lessonId, collision: null, overwriteChoice: null };
 }
 
@@ -384,8 +396,11 @@ export async function recapNode(
   if (!extracted) {
     return {};
   }
-  const student = await prisma.student.findFirstOrThrow({
-    orderBy: { createdAt: "asc" },
+  if (!state.studentId) {
+    throw new Error("ingest: recap reached without a student in state");
+  }
+  const student = await prisma.student.findUniqueOrThrow({
+    where: { id: state.studentId },
   });
   const model = await getModel("socratic");
   const response = await model.invoke([

@@ -1,10 +1,15 @@
-import { afterAll, afterEach, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 
+import { provisionStudent, TEST_STUDENT_ID } from "../../test/fixtures.js";
 import { prisma } from "../db/client.js";
 import { applyProfileOp } from "./profile-applier.js";
 
-const STUDENT = "10000000-0000-4000-8000-000000000001";
+const STUDENT = TEST_STUDENT_ID;
 const META = { studentId: STUDENT, changedBy: "test" };
+
+beforeAll(async () => {
+  await provisionStudent();
+});
 
 afterEach(async () => {
   await prisma.studentProfileHistory.deleteMany();

@@ -1,12 +1,22 @@
-import { afterAll, afterEach, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 
+import {
+  CONCEPT_MONARCHIE,
+  CONCEPT_WATERLOO,
+  provisionLesson,
+  TEST_STUDENT_ID,
+} from "../../test/fixtures.js";
 import { prisma } from "../db/client.js";
 import { applyMasteryOps } from "./mastery-applier.js";
 
-const STUDENT = "10000000-0000-4000-8000-000000000001";
-const WATERLOO = "11111111-1111-4111-8111-000000000101";
-const MONARCHIE = "11111111-1111-4111-8111-000000000102";
+const STUDENT = TEST_STUDENT_ID;
+const WATERLOO = CONCEPT_WATERLOO;
+const MONARCHIE = CONCEPT_MONARCHIE;
 const META = { studentId: STUDENT, changedBy: "test" };
+
+beforeAll(async () => {
+  await provisionLesson();
+});
 
 afterEach(async () => {
   await prisma.masteryHistory.deleteMany();

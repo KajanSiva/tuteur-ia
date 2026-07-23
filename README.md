@@ -46,7 +46,7 @@ A **pnpm workspaces + Turborepo** monorepo, Node 20+.
 |---|---|
 | Backend | Fastify (thin API) + **LangGraph.js** in-process |
 | LLM | LangChain + Zod structured output, through a **per-role model factory** (provider-agnostic, Anthropic Claude by default) |
-| Domain database | PostgreSQL via **Prisma 7** (migrations + seed) |
+| Domain database | PostgreSQL via **Prisma 7** (migrations) |
 | Conversation persistence | `PostgresSaver` (LangGraph checkpointer) |
 | Frontend | React + Vite + Tailwind v4 + shadcn/ui, streaming via **AI SDK v6** (`useChat`) |
 | Transport | a single `/api/chat` endpoint, SSE stream (`UIMessageStream`) |
@@ -100,7 +100,6 @@ cp apps/backend/.env.example apps/backend/.env
 # 2. Database
 docker compose up -d postgres
 pnpm --filter @tuteur/backend db:migrate
-pnpm --filter @tuteur/backend db:seed     # demo lessons (History fixtures)
 
 # 3. Run backend (:3001) + frontend (:5173)
 pnpm dev

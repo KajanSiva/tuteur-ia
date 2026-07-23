@@ -160,6 +160,7 @@ async function pickLesson(
 
 export type LessonResolveState = {
   messages: BaseMessage[];
+  studentId: string | null;
 };
 
 // Resolver node: resolve the lesson into state, or emit a clarification /
@@ -168,7 +169,10 @@ export type LessonResolveState = {
 // LLM call; lessonId is cleared on every non-resolved outcome. On a resolved
 // outcome the phase is cleared to idle (hydrate sets "revising" in the same run).
 export async function resolveLessonNode(state: LessonResolveState) {
-  const lessons = toLessonRefs(await getLessonsForResolution());
+  if (!state.studentId) {
+    throw new Error("resolveLesson: reached without a student in state");
+  }
+  const lessons = toLessonRefs(await getLessonsForResolution(state.studentId));
   if (lessons.length === 0) {
     return {
       lessonId: null,

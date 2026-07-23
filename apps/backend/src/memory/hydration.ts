@@ -65,7 +65,9 @@ export async function hydrateForRevision(
   if (!student) {
     throw new Error(`Unknown student: ${studentId}`);
   }
-  if (!lesson) {
+  // A lesson belonging to another student is treated as unknown, so a stray
+  // lessonId can never surface a sibling's lesson content.
+  if (!lesson || lesson.studentId !== studentId) {
     throw new Error(`Unknown lesson: ${lessonId}`);
   }
 

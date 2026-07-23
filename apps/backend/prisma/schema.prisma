@@ -27,26 +27,45 @@ enum MemoryOp {
   noop
 }
 
+// Family admin account. A single household per install: the first parent
+// registers through onboarding and then creates the child accounts.
+model Parent {
+  id           String   @id @default(uuid(7)) @db.Uuid
+  displayName  String   @map("display_name")
+  username     String   @unique
+  passwordHash String   @map("password_hash")
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  @@map("parent")
+}
+
 // Static student identity (not the evolving pedagogical profile).
 // display_name is used to address the child; grade_level/age calibrate
-// language, difficulty and expected precision.
+// language, difficulty and expected precision. username/password_hash are
+// the child's own login credentials, set by the parent at creation.
 model Student {
-  id          String   @id @default(uuid(7)) @db.Uuid
-  displayName String   @map("display_name")
-  gradeLevel  String   @map("grade_level")
-  age         Int?
-  createdAt   DateTime @default(now()) @map("created_at")
+  id           String   @id @default(uuid(7)) @db.Uuid
+  displayName  String   @map("display_name")
+  username     String   @unique
+  passwordHash String   @map("password_hash")
+  gradeLevel   String   @map("grade_level")
+  age          Int?
+  createdAt    DateTime @default(now()) @map("created_at")
 
   masteries     Mastery[]
   profile       StudentProfile?
   sessionTraces SessionTrace[]
+  lessons       Lesson[]
 
   @@map("student")
 }
 
-// A lesson: unstructured blob plus light metadata.
+// A lesson: unstructured blob plus light metadata. Owned by the student who
+// ingested it — each child has their own lesson corpus (own grade, own
+// subjects), so resolution and collision detection are always per student.
 model Lesson {
   id        String   @id @default(uuid(7)) @db.Uuid
+  studentId String   @map("student_id") @db.Uuid
   subject   String
   title     String
   contentMd String   @map("content_md")
@@ -54,10 +73,12 @@ model Lesson {
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
+  student       Student @relation(fields: [studentId], references: [id], onDelete: Cascade)
   concepts      Concept[]
   sessionTraces SessionTrace[]
   sourceImages  LessonSourceImage[]
 
+  @@index([studentId])
   @@map("lesson")
 }
 
