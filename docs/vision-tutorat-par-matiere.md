@@ -1,8 +1,8 @@
 # Vision — un tutorat par matière (primaire & collège)
 
-Document de travail pour le brainstorm. Aucune décision ici n'est actée : la
-section finale liste ce qui doit être tranché. Périmètre visé à court terme :
-CE2 et 6ème ; projection : toute la primaire et le collège.
+Document de travail. Les décisions actées au brainstorm sont en §9 ; les
+questions encore ouvertes en §10. Périmètre visé à court terme : CE2 et 6ème ;
+projection : toute la primaire et le collège.
 
 ## 1. Le problème
 
@@ -20,10 +20,10 @@ reste de la scolarité :
 - en **physique-chimie** (collège), le cours s'apprend mais la maîtrise se
   prouve en appliquant une méthode à un exercice.
 
-Un seul mode d'évaluation ⇒ soit on n'évalue pas vraiment (l'enfant « explique »
-la division sans jamais en poser une), soit on exclut des matières entières.
+Un seul mode d'évaluation ⇒ soit on n'évalue pas vraiment, soit on exclut des
+matières entières.
 
-## 2. L'idée pivot : découpler le savoir de l'activité
+## 2. Premier pilier : découpler le savoir de l'activité
 
 Ce qui est déjà juste dans l'app et ne doit pas bouger : la mémoire est un
 ensemble de **concepts** par élève, avec un niveau de maîtrise, un historique
@@ -31,7 +31,7 @@ append-only et une politique d'écriture prudente. Ce modèle est agnostique à 
 matière.
 
 Ce qui doit devenir pluriel : **l'activité** par laquelle on travaille et on
-évalue un concept. La vision tient en une phrase :
+évalue un concept.
 
 > Un concept a un *type de savoir* ; une séance choisit, pour chaque concept,
 > une *activité* adaptée à ce type ; toutes les activités parlent à la mémoire
@@ -45,7 +45,7 @@ Renseigné à l'ingestion (le parseur le fait déjà pour la barre de précision
 |---|---|---|
 | **Fait** | dates, capitales, vocabulaire, définitions | quiz, rappel, socratique |
 | **Notion** | la laïcité, la photosynthèse, la monarchie constitutionnelle | dialogue socratique, reformulation |
-| **Méthode** | poser une division, accorder un participe, équilibrer un schéma | exercices générés, avec variation |
+| **Méthode** | poser une division, accorder un participe | exercices générés, avec variation |
 | **Automatisme** | tables, conjugaisons, calcul mental | drill rapide + répétition espacée serrée |
 | **Production** | rédaction, expression écrite | consigne + retour critérié |
 
@@ -55,154 +55,251 @@ Renseigné à l'ingestion (le parseur le fait déjà pour la barre de précision
 |---|---|---|---|
 | **Dialogue socratique** (existant) | notion, fait | histoire-géo, sciences, EMC | juge LLM (existant) |
 | **Quiz / questions de connaissance** | fait, automatisme | toutes | fermée (exacte ou juge cheap) |
-| **Exercice vérifiable** | méthode, automatisme | maths, physique, grammaire/conjugaison | déterministe quand c'est du calcul, juge LLM sinon |
+| **Exercice vérifiable** | méthode, automatisme | maths, physique, grammaire | par sous-domaine, voir §5 |
 | **Dictée** | automatisme (orthographe) | français primaire | diff + classification des erreurs |
 | **Expression écrite** | production | français | retour critérié (grille), pas de score binaire |
 | **Récitation** | fait, automatisme | poésies, tables, verbes irréguliers | rappel guidé |
 | *(plus tard)* **Oral / audio** | langues vivantes | anglais | hors périmètre proche |
 
-Couverture CE2 : socratique (Questionner le monde) + quiz + exercices (maths,
-grammaire) + dictée + récitation (poésies, tables).
-Couverture 6ème : socratique (histoire-géo, sciences & techno, EMC) + quiz +
-exercices (maths, grammaire) + expression écrite courte.
+## 3. Deuxième pilier : le référentiel de programme
 
-## 3. La séance : une playlist d'activités
+**Décision actée.** L'app embarque une **arborescence des concepts à maîtriser
+par niveau de classe et par matière**, dérivée des programmes officiels
+(BO/Éduscol). C'est le squelette durable sur lequel tout se rattache.
 
-La séance reste orchestrée par du code déterministe (rien ne change dans la
-philosophie) :
+```
+CurriculumNode
+  gradeLevel   "CE2" | "6ème" | …
+  subject      "Mathématiques" | "Français" | …
+  domain       le domaine officiel (maths : nombres et calculs /
+               grandeurs et mesures / espace et géométrie ; …)
+  parentId     arborescence (domaine → attendu → sous-compétence)
+  label        « poser et effectuer une division euclidienne », …
+  knowledgeKind fait / notion / méthode / automatisme / production
+```
 
-1. **Sélection des concepts** — comme aujourd'hui : gaps-first + répétition
-   espacée, mais *inter-leçons* à terme (le « menu du jour »).
-2. **Choix d'activité par concept** — déterministe : type de savoir +
-   historique (varier les modalités, re-tester une méthode par un exercice
-   différent) + profil de l'élève.
-3. **Exécution** — chaque activité est un module isolé qui rend le même
-   signal de maîtrise ; la boucle avance concept par concept comme aujourd'hui.
+Le référentiel a un **double rôle** :
+
+1. **Ancrage des exercices** pour les matières à savoir-faire. En maths, les
+   exercices générés s'ancrent directement sur les nœuds du référentiel — pas
+   besoin d'attendre une photo de leçon pour travailler les tables ou la
+   division. La leçon photographiée reste utile (elle dit *où en est la
+   classe*), mais elle n'est plus indispensable.
+2. **Carte d'avancement** pour toutes les matières : où en est l'élève par
+   rapport au programme de sa classe (couverture + maîtrise par domaine).
+   C'est la brique centrale de la vue parent.
+
+**Le référentiel est par classe, avec la profondeur de la classe.** Une même
+compétence revient d'une année sur l'autre (« la division » en CE2 n'est pas
+« la division euclidienne » de 6ème) : chaque classe a son nœud propre, avec
+l'exigence de son programme. Les nœuds d'une même lignée sont reliés entre
+niveaux (le nœud 6ème connaît son antécédent CM2/CE2), ce qui donne deux
+choses : le tuteur sait sur quel socle antérieur s'appuyer quand un élève
+bloque, et la progression pluri-annuelle est visible (utile quand un enfant
+passe dans la classe suivante — sa mémoire ne repart pas de zéro, elle se
+reprojette sur les nœuds du nouveau niveau).
+
+**Les leçons importées restent la source d'ancrage des matières déclaratives**
+(histoire, sciences…) : c'est ce qui garantit que les questions portent
+exactement sur ce que l'enfant a vu en classe. Chaque concept extrait d'une
+leçon est **rattaché au nœud de référentiel correspondant** quand le lien est
+confiant (LLM avec seuil ; un concept non rattaché reste valide et rattachable
+plus tard). La maîtrise d'un nœud du référentiel s'agrège alors depuis les
+concepts de leçons rattachés + les exercices ancrés directement.
+
+**Fabrication du contenu** : fichiers versionnés dans le repo (un par
+niveau × matière), curatés une fois avec assistance LLM puis relus — pas de
+génération à la volée. Ordre de curation : maths CE2 + 6ème (le plus rentable :
+ancre les exercices), puis français, puis les autres matières (où le
+référentiel ne sert d'abord qu'à la carte d'avancement).
+
+L'asymétrie voulue : **import de leçons prioritaire en histoire/sciences,
+référentiel prioritaire en maths/français** — les deux coexistent partout.
+
+## 4. La séance : une playlist d'activités
+
+Orchestration déterministe, comme aujourd'hui :
+
+1. **Sélection des cibles** — gaps-first + répétition espacée, inter-leçons et
+   inter-matières à terme ; les cibles sont des concepts de leçon *ou* des
+   nœuds du référentiel (maths).
+2. **Choix d'activité par cible** — déterministe : type de savoir + historique
+   (varier les modalités) + profil de l'élève.
+3. **Exécution** — chaque activité est un module isolé qui rend le même signal
+   de maîtrise ; boucle concept par concept inchangée.
 4. **Distillation** — inchangée : applier déterministe, silence ≠
-   contradiction, historique, trace de séance (enrichie du type d'activité).
+   contradiction, historique, trace de séance enrichie du type d'activité.
 
-## 4. Autonomie de l'enfant, suivi du parent
+**Le menu du jour (acté)** : à l'ouverture, le tuteur propose la séance
+(« aujourd'hui : 2 exercices de maths, 3 questions d'histoire — ~10 min »),
+l'enfant accepte d'un tap. Pas de composition à la volée pour l'instant ;
+demander une leçon précise reste possible comme aujourd'hui.
 
-**L'enfant fait tout seul.** Il ouvre l'app, le tuteur lui propose un menu
-(« aujourd'hui : 2 exercices de maths, 3 questions d'histoire — ~10 min »), il
-peut aussi demander une leçon précise ou photographier une nouvelle leçon.
-Aucune étape ne requiert le parent. Le système est sûr par construction : il ne
-donne jamais la réponse, et le contenu vient des leçons de l'école de l'enfant.
+## 5. Vérification : par matière ET par sous-domaine
 
-**Le parent suit sans être dans la boucle.** L'espace parent montre par enfant :
-la progression par matière et par concept (avec tendance), l'assiduité (séances,
-durée), les points de blocage détectés (concepts qui résistent après plusieurs
-séances), et à terme un résumé hebdomadaire. Optionnel (à trancher) : le parent
-oriente (« cette semaine, priorité aux tables »), valide les leçons ingérées,
-consulte le détail des séances.
+Une correction fausse détruit la confiance de l'enfant et du parent. Décision
+actée : **la stratégie de vérification se choisit par sous-domaine, pas par
+matière** — au sein des maths, ce qui est fiable pour le calcul ne l'est pas
+pour la géométrie.
+
+| Sous-domaine (exemples) | Génération | Vérification |
+|---|---|---|
+| Automatismes (tables, opérations, conversions) | templates paramétrés déterministes | calcul — fiabilité totale, zéro LLM |
+| Problèmes d'application (énoncés libres) | LLM depuis leçon/référentiel, **vérifié par résolution indépendante avant d'être posé** | comparaison au résultat vérifié + explication socratique en cas d'erreur |
+| Espace et géométrie | prudence : formats fermés d'abord (reconnaissance, propriétés, vocabulaire, petits calculs de périmètre/aire) | fermée/déterministe ; les constructions libres sont **hors périmètre** tant qu'on n'a pas une vérification fiable |
+| Grammaire/conjugaison | templates + banques dérivées du référentiel | fermée (réponse attendue connue) |
+
+Le registre d'activités porte donc, par nœud de référentiel, la stratégie
+autorisée — c'est une donnée du référentiel, pas une heuristique en prompt.
+
+Cas du doute (vérificateur pas sûr) : *proposition par défaut, à valider à
+l'implémentation* — l'exercice douteux n'est pas posé (on en tire un autre) ;
+si le doute apparaît à la correction, l'échange ne compte pas dans la maîtrise
+et est marqué dans la trace pour inspection.
+
+## 6. Autonomie de l'enfant, suivi du parent
+
+**L'enfant fait tout seul.** Menu du jour en un tap, demande libre d'une leçon,
+ingestion photo à sa main. Le système est sûr par construction : il ne donne
+jamais la réponse, le contenu vient des leçons et du programme officiel.
+
+**Le parent (acté : lecture seule + analyse + import).**
+- Lecture seule sur la progression : carte d'avancement par rapport au
+  programme (par matière et domaine), maîtrise par concept avec tendance,
+  assiduité, points de blocage (concepts qui résistent).
+- **Import de documents depuis l'espace parent** : le parent peut téléverser
+  les leçons (photos/PDF) pour un enfant — même pipeline d'ingestion que côté
+  enfant. Utile quand c'est le parent qui a le cartable sous la main.
+- Pas d'édition de la mémoire ni de pilotage des séances pour l'instant.
+- Communication : un mécanisme simple d'abord (un résumé périodique dans
+  l'espace parent ; notifications plus tard).
 
 **Calibrage par âge.**
-- CE2 : séances courtes (5-10 min), consignes minimales, audio utile (TTS pour
-  les dictées et les consignes), UI simple, encouragements très présents,
-  gamification légère (série de jours, étoiles par concept maîtrisé).
-- 6ème : séances 15-20 min, plusieurs matières, et le vrai besoin du collège :
-  **préparer un contrôle** (« contrôle de maths jeudi sur les fractions » → un
-  plan de révision étalé sur les jours restants).
+- CE2 : séances 5-10 min, consignes minimales, audio utile (TTS), UI simple,
+  encouragements, gamification légère à trancher.
+- 6ème : séances 15-20 min, plusieurs matières ; plus tard la préparation de
+  contrôles (plan multi-jours).
 
-## 5. Architecture cible : le contrat d'activité
+## 7. Architecture cible
 
-Le pivot technique est petit mais structurant : extraire de `revise.ts` la
-notion générique de « travailler un concept » et la mettre derrière un contrat.
+### Le contrat d'activité
+
+Extraire de `revise.ts` la notion générique de « travailler une cible » :
 
 ```
 ActivityModule = {
-  type: "socratic" | "quiz" | "exercise" | "dictation" | ...
-  // Peut-elle travailler ce concept ? (type de savoir, matière, âge)
-  accepts(concept, student): boolean
-  // Sous-graphe : dialogue en un ou plusieurs tours, jusqu'à résolution
-  nodes / edges (LangGraph)
-  // Sortie OBLIGATOIREMENT identique pour toutes les activités :
-  → MasterySignal { status, level, rationale }   // le format actuel
+  type: "socratic" | "quiz" | "exercise" | "dictation" | …
+  accepts(target, student): boolean      // type de savoir, sous-domaine, âge
+  nodes / edges (LangGraph)              // dialogue en un ou plusieurs tours
+  → MasterySignal { status, level, rationale }   // format actuel, obligatoire
 }
 ```
 
-- **La mémoire ne change pas.** L'applier, les tables `mastery*`, la politique
-  d'écriture : intacts. C'est ce qui rend l'itération sur les activités sans
-  risque — une activité ratée ne peut pas corrompre la mémoire, au pire elle
-  produit un signal pauvre.
-- **La boucle de séance devient générique.** Le couple queue/cursor/turns
-  actuel pilote déjà la boucle ; il devient paramétré par l'activité courante
-  au lieu de supposer « socratique ».
-- **Un registre d'activités** (du code, pas de la config) déclare les modules
-  disponibles ; le sélecteur d'activité y puise. Ajouter une activité = un
-  dossier avec ses nœuds, ses prompts, ses tests unitaires et ses cas d'eval —
-  sans toucher au reste.
-- **Chaque activité a son harnais d'eval** (cas dorés + juges), comme le
-  socratique aujourd'hui. C'est la condition pour itérer vite sans régresser.
-- **Schéma** : `Concept.knowledgeKind` (fait/notion/méthode/automatisme/
-  production), rempli à l'ingestion ; les entrées de `session_trace` portent le
-  type d'activité et son détail (l'énoncé posé, la réponse donnée).
+- **La mémoire ne change pas** (applier, tables `mastery*`, politique
+  d'écriture). Une activité ratée produit au pire un signal pauvre — elle ne
+  peut pas corrompre la mémoire.
+- **La boucle de séance devient générique** : queue/cursor/turns actuels,
+  paramétrés par l'activité courante.
+- **Un registre d'activités** (du code) ; ajouter une activité = un dossier
+  avec ses nœuds, ses prompts, ses tests et ses cas d'eval, sans toucher au
+  reste. Chaque activité a son harnais d'eval — condition pour itérer vite.
 
-### Fiabilité des corrections (le point dur des maths)
+### Schéma (delta)
 
-Une correction fausse détruit la confiance (celle de l'enfant ET celle du
-parent). Position proposée : **hybride**.
-- Automatismes (tables, opérations, conversions) : énoncés générés par
-  *templates paramétrés déterministes* → la correction est un calcul, fiabilité
-  totale, zéro LLM dans la boucle de vérification.
-- Petits problèmes et exercices d'application : énoncé généré par LLM depuis la
-  leçon, mais **vérifié par résolution indépendante** (le vérificateur résout
-  de son côté, en tirant parti du calcul déterministe quand c'est possible)
-  avant d'être posé ; correction par comparaison + explication socratique en
-  cas d'erreur.
+- `CurriculumNode` (cf. §3) + seed versionné par niveau × matière.
+- `Concept.knowledgeKind` ; `Concept.curriculumNodeId?` (rattachement).
+- La maîtrise reste par (élève, concept) ; les exercices ancrés référentiel
+  écrivent sur un concept « du référentiel » matérialisé par élève au premier
+  travail (même applier, même historique).
+- `session_trace` : entrées typées par activité, avec le détail (énoncé posé,
+  réponse donnée) — la vue parent et le debug en dépendent.
 
-## 6. Chemin d'adaptation depuis l'app actuelle
+### TTS (à intégrer dès la conception)
 
-Chaque étape est livrable et utile seule ; l'ordre minimise le risque.
+Périmètre : dictées (indispensable) et consignes lues pour le CE2 (confort).
+Intégration proposée : un endpoint backend `GET /api/tts?text=…` qui appelle un
+service TTS (choix du fournisseur à faire : OpenAI TTS, Google, ElevenLabs…),
+avec cache disque par hash du texte (une dictée re-jouée ne re-paye pas), et un
+composant audio simple côté front. Le français de qualité et le coût par
+caractère sont les critères de choix. Rien d'autre dans l'app n'a besoin de
+changer — c'est un service annexe, pas un pilier.
 
-1. **Le contrat d'activité (pure architecture).** Refactorer le flow socratique
-   actuel en premier module du registre ; boucle de séance générique ;
-   `knowledgeKind` sur les concepts ; `session_trace` enrichie. Aucune
-   fonctionnalité nouvelle — c'est le pivot modulaire, tout le reste en découle.
-2. **Le quiz.** Deuxième activité, la plus simple (questions fermées générées
-   du concept, correction quasi déterministe), valable dans toutes les
-   matières. Elle valide le contrat avec un risque minimal, et améliore déjà
-   les révisions de « faits » en histoire/sciences.
-3. **Les exercices vérifiables, maths d'abord.** Templates déterministes pour
-   les automatismes, génération vérifiée pour les problèmes. UI d'entrée
-   adaptée (clavier numérique, brouillon). C'est l'étape qui ouvre vraiment les
-   maths CE2 et 6ème.
-4. **Le menu du jour.** Sélecteur inter-leçons et inter-matières (SRS global),
-   proposition proactive à l'ouverture. À ce stade, l'enfant a une vraie
-   routine autonome.
-5. **Le français au-delà de la grammaire.** Dictée (nécessite TTS) puis
-   expression écrite courte (retour critérié). 
-6. **Le collège en propre.** Préparation de contrôles (plan multi-jours),
-   séances multi-matières.
+## 8. Chemin d'adaptation depuis l'app actuelle
 
-En parallèle, la **vue parent** s'enrichit naturellement : elle lit les mêmes
-tables (maîtrise par concept, traces de séance typées par activité) — chaque
-étape ci-dessus rend le suivi plus riche sans travail dédié majeur.
+1. **Le contrat d'activité (pure architecture).** Le socratique devient le
+   premier module du registre ; boucle de séance générique ; `knowledgeKind` ;
+   traces typées. Aucune fonctionnalité nouvelle — le pivot modulaire.
+2. **Le référentiel.** Schéma `CurriculumNode` + curation maths CE2 & 6ème +
+   rattachement des concepts à l'ingestion + première carte d'avancement
+   (lecture seule) dans la vue parent.
+3. **Le quiz.** Deuxième activité, la plus simple, toutes matières ; tire ses
+   questions des concepts de leçons ET des nœuds du référentiel. Valide le
+   contrat à faible risque.
+4. **Les exercices maths.** Templates déterministes pour les automatismes,
+   génération vérifiée pour les problèmes, formats fermés pour la géométrie ;
+   UI d'entrée adaptée (clavier numérique). L'étape qui ouvre vraiment les
+   maths CE2/6ème.
+5. **Le menu du jour.** Sélecteur inter-leçons/inter-matières (SRS global) +
+   proposition à l'ouverture, un tap pour accepter.
+6. **Le français au-delà de la grammaire.** Dictée (TTS) puis expression
+   écrite courte (retour critérié). Curation référentiel français.
+7. **Le collège en propre.** Préparation de contrôles, séances multi-matières.
 
-## 7. Décisions produit à trancher (ordre du brainstorm)
+En parallèle : l'espace parent s'enrichit à chaque étape (il lit les mêmes
+tables) + import de documents côté parent (réutilise le pipeline d'ingestion,
+peut arriver tôt car indépendant).
 
-1. **Source des exercices** — tout générer depuis les leçons photographiées
-   (fidèle à « l'app suit l'école »), ou accepter des banques/templates par
-   niveau pour les automatismes (recommandé : templates pour les automatismes
-   uniquement, génération depuis la leçon pour le reste) ?
-2. **Fiabilité maths** — valide-t-on la position hybride (déterministe pour le
-   calcul, LLM vérifié pour les problèmes) ? Quel comportement quand le
-   vérificateur n'est pas sûr : ne pas poser l'exercice, ou le poser sans le
-   compter dans la maîtrise ?
-3. **Le menu du jour** — imposé (l'enfant suit le programme du tuteur), proposé
-   (un tap pour accepter, libre sinon — recommandé), ou libre total comme
-   aujourd'hui ?
-4. **Gamification** — série de jours + étoiles par concept, plus, ou rien ?
-   Visible par le parent ?
-5. **Audio** — TTS pour les dictées et les consignes CE2 : on l'assume dès
-   l'étape 5 (coût, choix du service), ou on repousse les dictées ?
-6. **Rôle du parent dans la boucle** — lecture seule ? priorités de la semaine ?
-   validation des leçons ingérées ? visibilité sur les transcripts complets des
-   séances ou seulement les résumés ?
-7. **Compétences transverses** — on garde les concepts rattachés à leur leçon
-   (simple, actuel) et on traite les doublons inter-leçons plus tard, ou on
-   introduit tôt un référentiel de compétences durable (fractions, accords…)
-   auquel les concepts se rattachent ? (Recommandé : plus tard, sur données
-   réelles.)
-8. **Préparation de contrôles (6ème)** — dans les 3 prochains mois ou pas ?
-   Elle influence le sélecteur de séance (objectif daté vs routine).
+## 9. Décisions actées
+
+1. **Référentiel de programme par classe** : oui, embarqué et versionné,
+   double rôle (ancrage exercices + carte d'avancement). L'import de leçons
+   reste central pour les matières déclaratives.
+2. **Vérification par sous-domaine** : déterministe pour le calcul et les
+   automatismes ; LLM vérifié par résolution indépendante pour les problèmes ;
+   formats fermés pour la géométrie (pas de construction libre pour l'instant).
+3. **Menu du jour** : proposé, un tap pour accepter ; pas de composition à la
+   volée pour l'instant.
+4. **TTS** : intégré à la conception (dictées + consignes CE2), service à
+   choisir, cache par texte.
+5. **Parent** : lecture seule + analyses par concept/domaine + import de
+   documents ; pas d'édition de mémoire ; communication simple d'abord.
+6. **Rattachement leçon → référentiel** : à chaque ingestion, les concepts
+   extraits sont rattachés aux concepts officiels de la base ; une même
+   compétence est dupliquée entre classes (un nœud par niveau, avec la
+   profondeur du niveau), les nœuds d'une lignée étant reliés entre eux.
+
+## 10. Questions encore ouvertes
+
+1. **Cas du doute à la vérification** — la proposition par défaut (§5 : ne pas
+   poser / ne pas compter) reste à valider à l'implémentation.
+2. **Gamification** — série de jours, étoiles par concept : quoi exactement, et
+   visible ou non par le parent ?
+3. **Préparation de contrôles (6ème)** — voir le détail ci-dessous ; à décider :
+   dans le scope des 3 prochains mois ou pas.
+4. **Granularité du référentiel** — jusqu'où descendre (domaine → attendu →
+   sous-compétence → micro-savoir-faire) ? À trancher pendant la curation
+   maths, sur pièce.
+5. **Fournisseur TTS** — qualité du français vs coût ; à évaluer au moment de
+   la dictée.
+
+### Détail — la préparation de contrôles (6ème)
+
+Au collège, les évaluations sont annoncées à l'avance (« contrôle de maths
+jeudi, chapitres 4 et 5 »). L'idée :
+
+1. **Déclarer le contrôle** — l'enfant (ou le parent) dit au tuteur : matière,
+   date, périmètre (les leçons ou chapitres concernés).
+2. **Plan de révision inversé depuis la date** — le sélecteur de séance change
+   d'objectif : au lieu de la routine (répétition espacée globale), il répartit
+   le périmètre sur les jours restants — par exemple J-5/J-4 couverture de tous
+   les concepts du périmètre, J-3/J-2 exercices ciblés sur les faiblesses
+   détectées, J-1 quiz de synthèse rapide. Le menu du jour reflète ce plan.
+3. **Après le contrôle** — retour à la routine ; plus tard, possibilité
+   d'importer la copie corrigée pour recaler la mémoire sur ce que le contrôle
+   a réellement montré.
+
+Pourquoi la décision compte dès maintenant : c'est le seul cas où le sélecteur
+de séance poursuit un **objectif daté** et non une routine. Si on le veut dans
+les 3 prochains mois, le sélecteur (étape 5 du chemin, le menu du jour) doit
+être conçu d'emblée pour accepter des objectifs prioritaires ; sinon on le
+gardera pour la phase collège (étape 7).
