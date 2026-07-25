@@ -135,6 +135,17 @@ Orchestration déterministe, comme aujourd'hui :
 l'enfant accepte d'un tap. Pas de composition à la volée pour l'instant ;
 demander une leçon précise reste possible comme aujourd'hui.
 
+**Les échéances (acté).** Le sélecteur poursuit deux régimes, dès sa
+conception : la **routine** (répétition espacée globale) et les **objectifs
+datés**. Une échéance = matière, date, périmètre (leçons/chapitres, ou une
+poésie, une dictée préparée) déclarée par l'enfant ou le parent. Ce n'est pas
+un sujet « collège » : dès le CE1-CE2, les évaluations s'annoncent et les
+poésies se donnent à une date. Quand une échéance approche, le plan se
+construit à rebours de la date (couverture du périmètre → travail ciblé des
+faiblesses → synthèse rapide la veille) et le menu du jour le reflète ; après
+l'échéance, retour à la routine. Plus tard : importer la copie corrigée pour
+recaler la mémoire.
+
 ## 5. Vérification : par matière ET par sous-domaine
 
 Une correction fausse détruit la confiance de l'enfant et du parent. Décision
@@ -240,10 +251,13 @@ changer — c'est un service annexe, pas un pilier.
    UI d'entrée adaptée (clavier numérique). L'étape qui ouvre vraiment les
    maths CE2/6ème.
 5. **Le menu du jour.** Sélecteur inter-leçons/inter-matières (SRS global) +
-   proposition à l'ouverture, un tap pour accepter.
+   proposition à l'ouverture, un tap pour accepter. Conçu d'emblée à deux
+   régimes : routine + objectifs datés (les échéances, §4) — la déclaration
+   d'échéance arrive ici, le plan à rebours aussi.
 6. **Le français au-delà de la grammaire.** Dictée (TTS) puis expression
    écrite courte (retour critérié). Curation référentiel français.
-7. **Le collège en propre.** Préparation de contrôles, séances multi-matières.
+7. **Le collège en propre.** Séances multi-matières plus longues, import de la
+   copie corrigée après une échéance.
 
 En parallèle : l'espace parent s'enrichit à chaque étape (il lit les mêmes
 tables) + import de documents côté parent (réutilise le pipeline d'ingestion,
@@ -267,39 +281,20 @@ peut arriver tôt car indépendant).
    extraits sont rattachés aux concepts officiels de la base ; une même
    compétence est dupliquée entre classes (un nœud par niveau, avec la
    profondeur du niveau), les nœuds d'une lignée étant reliés entre eux.
+7. **Les échéances dès le départ** : le sélecteur de séance est conçu à deux
+   régimes (routine + objectifs datés), car les dates existent dès la primaire
+   (évaluations annoncées, poésies) — pas seulement au collège.
+8. **Cas du doute à la vérification** : un exercice douteux n'est pas posé ;
+   un doute apparu à la correction ne compte pas dans la maîtrise et est
+   marqué dans la trace pour inspection.
 
-## 10. Questions encore ouvertes
+## 10. Points délégués à l'implémentation
 
-1. **Cas du doute à la vérification** — la proposition par défaut (§5 : ne pas
-   poser / ne pas compter) reste à valider à l'implémentation.
-2. **Gamification** — série de jours, étoiles par concept : quoi exactement, et
-   visible ou non par le parent ?
-3. **Préparation de contrôles (6ème)** — voir le détail ci-dessous ; à décider :
-   dans le scope des 3 prochains mois ou pas.
-4. **Granularité du référentiel** — jusqu'où descendre (domaine → attendu →
-   sous-compétence → micro-savoir-faire) ? À trancher pendant la curation
-   maths, sur pièce.
-5. **Fournisseur TTS** — qualité du français vs coût ; à évaluer au moment de
+Tranchés sur pièce au moment concerné, pas bloquants pour la vision :
+
+1. **Granularité du référentiel** — jusqu'où descendre (domaine → attendu →
+   sous-compétence) : à calibrer pendant la curation maths, sur pièce.
+2. **Gamification** — série de jours, étoiles par concept : forme exacte et
+   visibilité parent à décider quand le menu du jour existe (elle s'y adosse).
+3. **Fournisseur TTS** — qualité du français vs coût ; à évaluer au moment de
    la dictée.
-
-### Détail — la préparation de contrôles (6ème)
-
-Au collège, les évaluations sont annoncées à l'avance (« contrôle de maths
-jeudi, chapitres 4 et 5 »). L'idée :
-
-1. **Déclarer le contrôle** — l'enfant (ou le parent) dit au tuteur : matière,
-   date, périmètre (les leçons ou chapitres concernés).
-2. **Plan de révision inversé depuis la date** — le sélecteur de séance change
-   d'objectif : au lieu de la routine (répétition espacée globale), il répartit
-   le périmètre sur les jours restants — par exemple J-5/J-4 couverture de tous
-   les concepts du périmètre, J-3/J-2 exercices ciblés sur les faiblesses
-   détectées, J-1 quiz de synthèse rapide. Le menu du jour reflète ce plan.
-3. **Après le contrôle** — retour à la routine ; plus tard, possibilité
-   d'importer la copie corrigée pour recaler la mémoire sur ce que le contrôle
-   a réellement montré.
-
-Pourquoi la décision compte dès maintenant : c'est le seul cas où le sélecteur
-de séance poursuit un **objectif daté** et non une routine. Si on le veut dans
-les 3 prochains mois, le sélecteur (étape 5 du chemin, le menu du jour) doit
-être conçu d'emblée pour accepter des objectifs prioritaires ; sinon on le
-gardera pour la phase collège (étape 7).
