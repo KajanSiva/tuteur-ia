@@ -288,7 +288,35 @@ peut arriver tôt car indépendant).
    un doute apparu à la correction ne compte pas dans la maîtrise et est
    marqué dans la trace pour inspection.
 
-## 10. Points délégués à l'implémentation
+## 10. Multi-clients : web aujourd'hui, mobile natif demain
+
+Le backend est traité comme une API pour N clients. État des lieux : le chat
+est déjà un protocole client-agnostique (POST + flux de parts JSON typées,
+contrats dans `@tuteur/shared`), les threads sont liés à l'élève côté serveur
+(web et mobile partagent la même session), l'ingestion photo et le futur TTS
+sont du HTTP standard. Le seul couplage web est l'auth par cookie.
+
+Changements backend requis (petits, à faire au moment du chantier mobile) :
+
+1. **Auth duale** — accepter le token aussi en `Authorization: Bearer` et le
+   retourner dans le corps du login ; le mobile le stocke en keychain, le web
+   garde son cookie httpOnly.
+2. **HTTPS public** — le déploiement VPS + TLS devient un prérequis (client
+   hors réseau domestique).
+3. **Contrats additifs seulement** — une app installée se met à jour après le
+   backend ; les évolutions de contrat restent rétro-compatibles.
+4. **Push notifications** (plus tard) — l'ajout FCM/APNs portera le mécanisme
+   de communication parent.
+
+Choix de framework : **Expo / React Native recommandé** — `apps/mobile` dans
+le monorepo, réutilise `@tuteur/shared` et le client AI SDK tels quels. Un
+natif Swift/Kotlin/Flutter imposerait de générer les contrats (OpenAPI depuis
+zod) : coût permanent, à n'assumer que si un besoin natif fort apparaît.
+Étape intermédiaire : le web actuel en PWA installable (icône, plein écran,
+photo via navigateur) repousse le besoin du natif jusqu'à ce que le push ou
+l'UX photo le justifient.
+
+## 11. Points délégués à l'implémentation
 
 Tranchés sur pièce au moment concerné, pas bloquants pour la vision :
 
