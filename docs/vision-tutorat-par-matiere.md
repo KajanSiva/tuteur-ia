@@ -287,6 +287,9 @@ peut arriver tôt car indépendant).
 8. **Cas du doute à la vérification** : un exercice douteux n'est pas posé ;
    un doute apparu à la correction ne compte pas dans la maîtrise et est
    marqué dans la trace pour inspection.
+9. **Mobile natif iOS en phase 2** (repo séparé) : le backend reste la seule
+   source de vérité et doit être consommable par un client non-TypeScript —
+   auth duale, contrats générés depuis les schémas zod, SSE standard (§10).
 
 ## 10. Multi-clients : web aujourd'hui, mobile natif demain
 
@@ -308,13 +311,22 @@ Changements backend requis (petits, à faire au moment du chantier mobile) :
 4. **Push notifications** (plus tard) — l'ajout FCM/APNs portera le mécanisme
    de communication parent.
 
-Choix de framework : **Expo / React Native recommandé** — `apps/mobile` dans
-le monorepo, réutilise `@tuteur/shared` et le client AI SDK tels quels. Un
-natif Swift/Kotlin/Flutter imposerait de générer les contrats (OpenAPI depuis
-zod) : coût permanent, à n'assumer que si un besoin natif fort apparaît.
-Étape intermédiaire : le web actuel en PWA installable (icône, plein écran,
-photo via navigateur) repousse le besoin du natif jusqu'à ce que le push ou
-l'UX photo le justifient.
+**Décision actée : mobile 100 % natif, iOS d'abord (Swift), en phase 2, dans
+un repository séparé.** Le développement mobile n'est pas détaillé ici — ce
+document n'en retient que la contrainte qu'il impose au backend : être
+consommable par un client non-TypeScript. Concrètement, en plus des points
+ci-dessus :
+
+5. **Contrats générés, pas partagés** — les types de `@tuteur/shared` ne
+   traversent pas vers Swift ; les schémas zod du backend deviennent la source
+   d'un contrat généré (OpenAPI/JSON Schema) que le repo iOS consomme. À
+   mettre en place au démarrage de la phase 2 ; d'ici là, la discipline
+   « toute la surface API est décrite par des schémas zod » suffit.
+6. **Le flux de chat reste du SSE standard** — parsable côté Swift avec
+   URLSession ; aucun SDK propriétaire requis côté client.
+
+D'ici la phase 2, le web actuel en PWA installable (icône, plein écran, photo
+via navigateur) sert d'app mobile de transition.
 
 ## 11. Points délégués à l'implémentation
 
