@@ -1,8 +1,8 @@
 # tuteur-ia
 
-Socratic AI tutor (CM2 / History) with compounding memory. See the
-[README](README.md) for the project overview. This file holds working
-conventions.
+Socratic AI tutor with compounding memory — multi-child (parent admin +
+per-child logins), any school subject. See the [README](README.md) for the
+project overview. This file holds working conventions.
 
 ## Stack
 

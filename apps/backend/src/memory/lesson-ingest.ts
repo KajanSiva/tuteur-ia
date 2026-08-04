@@ -54,6 +54,7 @@ function extensionFor(mediaType: string): string {
 // recorded. A fresh lesson id is generated up front so the files can be laid out
 // before the rows reference them.
 export async function persistDraftLesson(
+  studentId: string,
   extracted: ExtractedLesson,
   images: SourceImage[],
 ): Promise<{ lessonId: string }> {
@@ -75,6 +76,7 @@ export async function persistDraftLesson(
     await tx.lesson.create({
       data: {
         id: lessonId,
+        studentId,
         subject: extracted.subject,
         title: extracted.title,
         contentMd: extracted.contentMd,

@@ -1,9 +1,15 @@
 # Tuteur IA — a Socratic tutor with compounding memory
 
-A **Socratic** AI tutor that helps a student (5th grade, History) reason their way
-to understanding instead of being handed the answer. What sets it apart is a
-**memory that compounds session after session** — a model of the student that is
-re-read and rewritten on every review, so the tutoring gets better over time.
+A **Socratic** AI tutor that helps a student reason their way to understanding
+instead of being handed the answer. What sets it apart is a **memory that
+compounds session after session** — a model of the student that is re-read and
+rewritten on every review, so the tutoring gets better over time.
+
+Built for family use: a parent account administers the install and creates one
+account per child (own login, own grade level); each child has their own lesson
+corpus, any school subject, and their own persistent tutoring session. A parent
+view shows, per child and per lesson, which concepts are mastered vs in
+progress.
 
 In practice everything happens in **a single chat**: the student opens the app and
 says "let's review lesson 13" or "I got a new lesson, take it into account," and the
@@ -46,7 +52,7 @@ A **pnpm workspaces + Turborepo** monorepo, Node 20+.
 |---|---|
 | Backend | Fastify (thin API) + **LangGraph.js** in-process |
 | LLM | LangChain + Zod structured output, through a **per-role model factory** (provider-agnostic, Anthropic Claude by default) |
-| Domain database | PostgreSQL via **Prisma 7** (migrations + seed) |
+| Domain database | PostgreSQL via **Prisma 7** (migrations) |
 | Conversation persistence | `PostgresSaver` (LangGraph checkpointer) |
 | Frontend | React + Vite + Tailwind v4 + shadcn/ui, streaming via **AI SDK v6** (`useChat`) |
 | Transport | a single `/api/chat` endpoint, SSE stream (`UIMessageStream`) |
@@ -100,7 +106,6 @@ cp apps/backend/.env.example apps/backend/.env
 # 2. Database
 docker compose up -d postgres
 pnpm --filter @tuteur/backend db:migrate
-pnpm --filter @tuteur/backend db:seed     # demo lessons (History fixtures)
 
 # 3. Run backend (:3001) + frontend (:5173)
 pnpm dev

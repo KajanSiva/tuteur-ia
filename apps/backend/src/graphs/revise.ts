@@ -6,7 +6,6 @@ import {
 import type { LangGraphRunnableConfig } from "@langchain/langgraph";
 import { z } from "zod";
 
-import { prisma } from "../db/client.js";
 import type { PrecisionBar } from "../generated/prisma/enums.js";
 import { getModel } from "../llm/models.js";
 import {
@@ -110,11 +109,11 @@ export function selectConcepts(
 
 const PRECISION_GUIDANCE: Record<PrecisionBar, string> = {
   exact:
-    "elle doit retrouver un fait précis (une date, un nom) — guide-la vers la réponse exacte.",
+    "il faut retrouver un fait précis (une date, un nom) — guide l'élève vers la réponse exacte.",
   intermediate:
-    "elle doit expliquer l'idée avec ses propres mots — vise la compréhension, pas le par-cœur.",
+    "il faut expliquer l'idée avec ses propres mots — vise la compréhension, pas le par-cœur.",
   global:
-    "elle doit saisir l'idée générale — l'essentiel suffit, n'exige pas de détail précis.",
+    "il faut saisir l'idée générale — l'essentiel suffit, n'exige pas de détail précis.",
 };
 
 const PRECISION_BAR_FOR_EVAL: Record<PrecisionBar, string> = {
@@ -132,8 +131,8 @@ export function buildSocraticSystem(
 ): string {
   const name = bundle.student.displayName;
   const lines = [
-    `Tu es un tuteur d'histoire bienveillant et patient pour ${name}, une élève de ${bundle.student.gradeLevel}.`,
-    "Tu l'aides à RÉVISER par la méthode socratique : tu poses UNE seule question à la fois pour la faire réfléchir par elle-même. Tu ne donnes JAMAIS la réponse directement ; tu l'amènes à la trouver. Tu l'encourages, tu restes bref et tu t'adresses à elle par son prénom.",
+    `Tu es un tuteur bienveillant et patient en ${bundle.lesson.subject} pour ${name}, élève de ${bundle.student.gradeLevel}.`,
+    "Tu aides l'élève à RÉVISER par la méthode socratique : tu poses UNE seule question à la fois pour faire réfléchir l'élève par ses propres moyens. Tu ne donnes JAMAIS la réponse directement ; tu amènes l'élève à la trouver. Tu encourages, tu restes bref et tu t'adresses à l'élève par son prénom.",
     "",
     `Leçon « ${bundle.lesson.title} » :`,
     bundle.lesson.contentMd,
@@ -142,16 +141,16 @@ export function buildSocraticSystem(
     concept.precisionNote ? `À retenir : ${concept.precisionNote}` : null,
     `Niveau d'exigence : ${PRECISION_GUIDANCE[concept.precisionBar]}`,
     concept.mastery
-      ? `Ce que tu sais d'elle sur ce point : niveau « ${concept.mastery.level} »${concept.mastery.rationale ? ` (${concept.mastery.rationale})` : ""}.`
-      : "Tu ne sais pas encore où elle en est sur ce point — c'est l'occasion de le découvrir.",
+      ? `Ce que tu sais de l'élève sur ce point : niveau « ${concept.mastery.level} »${concept.mastery.rationale ? ` (${concept.mastery.rationale})` : ""}.`
+      : "Tu ne sais pas encore où en est l'élève sur ce point — c'est l'occasion de le découvrir.",
     bundle.profile?.learningStyle
-      ? `Comment elle apprend le mieux : ${bundle.profile.learningStyle}.`
+      ? `Comment l'élève apprend le mieux : ${bundle.profile.learningStyle}.`
       : null,
     bundle.profile?.frictionToAvoid
       ? `À éviter : ${bundle.profile.frictionToAvoid}.`
       : null,
     "",
-    "Si l'élève vient de répondre, réagis brièvement à sa réponse (encourage, recadre sans donner la solution) puis relance avec UNE question pour creuser. Sinon, pose-lui UNE première question, simple et ouverte, pour l'amener à réfléchir sur ce concept.",
+    "Si l'élève vient de répondre, réagis brièvement à sa réponse (encourage, recadre sans donner la solution) puis relance avec UNE question pour creuser. Sinon, pose UNE première question, simple et ouverte, pour amener l'élève à réfléchir sur ce concept.",
   ];
   return lines.filter((line) => line !== null).join("\n");
 }
@@ -164,24 +163,18 @@ export function buildEvaluateSystem(
   concept: HydratedConcept,
 ): string {
   const lines = [
-    `Tu es l'évaluateur de maîtrise d'un tuteur d'histoire pour ${bundle.student.displayName} (CM2). Tu n'écris jamais à l'élève ; tu produis un signal structuré.`,
+    `Tu es l'évaluateur de maîtrise d'un tuteur en ${bundle.lesson.subject} pour ${bundle.student.displayName} (${bundle.student.gradeLevel}). Tu n'écris jamais à l'élève ; tu produis un signal structuré.`,
     `Concept évalué : « ${concept.label} ».`,
     concept.precisionNote ? `Référence : ${concept.precisionNote}` : null,
     `Niveau d'exigence : ${PRECISION_BAR_FOR_EVAL[concept.precisionBar]}`,
     "",
-    "À partir du DERNIER échange (ta question, sa réponse), juge si elle maîtrise CE concept au niveau d'exigence requis :",
-    "- status = \"resolved\" si sa dernière réponse montre qu'elle a compris ou retrouvé l'attendu ; sinon \"continue\" (il faut encore l'aider).",
-    "- level = son niveau actuel estimé (emerging | developing | secure).",
+    "À partir du DERNIER échange (ta question, la réponse de l'élève), juge si l'élève maîtrise CE concept au niveau d'exigence requis :",
+    "- status = \"resolved\" si la dernière réponse montre que l'élève a compris ou retrouvé l'attendu ; sinon \"continue\" (il faut encore aider).",
+    "- level = le niveau actuel estimé (emerging | developing | secure).",
     "- rationale = une courte justification.",
     "En cas de doute, choisis \"continue\" : ne déclare jamais un concept acquis sur une réponse floue.",
   ];
   return lines.filter((line) => line !== null).join("\n");
-}
-
-// The single POC student. Multi-student is out of scope (brief §0: "une élève");
-// the lesson, in contrast, is chosen by the deterministic resolver.
-async function resolveStudent() {
-  return prisma.student.findFirstOrThrow({ orderBy: { createdAt: "asc" } });
 }
 
 // Re-hydrates the session and resolves the concept under the cursor. Hydration
@@ -210,12 +203,13 @@ export async function hydrateNode(
   if (!state.lessonId) {
     throw new Error("revise: hydrate reached without a resolved lesson");
   }
-  const student = await resolveStudent();
-  const bundle = await hydrateForRevision(student.id, state.lessonId);
+  if (!state.studentId) {
+    throw new Error("revise: hydrate reached without a student in state");
+  }
+  const bundle = await hydrateForRevision(state.studentId, state.lessonId);
   const selected = selectConcepts(bundle.concepts, new Date());
-  const sessionTraceId = await startSessionTrace(student.id, state.lessonId);
+  const sessionTraceId = await startSessionTrace(state.studentId, state.lessonId);
   return {
-    studentId: student.id,
     sessionConceptIds: selected.map((c) => c.id),
     conceptCursor: 0,
     turnsOnConcept: 0,

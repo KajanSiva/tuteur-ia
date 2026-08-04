@@ -111,13 +111,13 @@ function buildCatalogue(lessons: LessonRef[]): string {
 
 function buildResolverSystem(catalogue: string): string {
   return [
-    "Tu aides à identifier de quelle leçon d'histoire une élève de CM2 veut parler.",
+    "Tu aides à identifier de quelle leçon un élève veut parler.",
     "Voici les leçons disponibles :",
     catalogue,
     "",
-    "À partir de ses messages, choisis la clé de la leçon qu'elle désigne :",
+    "À partir de ses messages, choisis la clé de la leçon désignée :",
     "- une leçon clairement désignée (numéro de thème, titre, ou sujet abordé) → sa clé (ex. « L1 »).",
-    "- une leçon qu'elle nomme mais qui n'est pas dans la liste → « none ».",
+    "- une leçon nommée mais qui n'est pas dans la liste → « none ».",
     "- aucune leçon désignée, ou trop vague pour trancher → « ambiguous ».",
     "Ne devine jamais au hasard : dans le doute, « ambiguous ».",
   ].join("\n");
@@ -160,6 +160,7 @@ async function pickLesson(
 
 export type LessonResolveState = {
   messages: BaseMessage[];
+  studentId: string | null;
 };
 
 // Resolver node: resolve the lesson into state, or emit a clarification /
@@ -168,7 +169,10 @@ export type LessonResolveState = {
 // LLM call; lessonId is cleared on every non-resolved outcome. On a resolved
 // outcome the phase is cleared to idle (hydrate sets "revising" in the same run).
 export async function resolveLessonNode(state: LessonResolveState) {
-  const lessons = toLessonRefs(await getLessonsForResolution());
+  if (!state.studentId) {
+    throw new Error("resolveLesson: reached without a student in state");
+  }
+  const lessons = toLessonRefs(await getLessonsForResolution(state.studentId));
   if (lessons.length === 0) {
     return {
       lessonId: null,

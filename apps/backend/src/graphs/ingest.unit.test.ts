@@ -63,6 +63,7 @@ describe("extractSourceImages", () => {
 function ingestState(over: Partial<IngestState> = {}): IngestState {
   return {
     messages: [],
+    studentId: "s",
     pendingIngestion: null,
     ingestedLessonId: null,
     collision: null,

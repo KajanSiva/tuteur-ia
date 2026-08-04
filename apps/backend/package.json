@@ -9,13 +9,13 @@
     "start": "node dist/server.js",
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate dev",
-    "db:seed": "tsx prisma/seed.ts",
     "eval": "tsx src/eval/run-eval.ts",
     "test": "vitest run",
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.test.json"
   },
   "dependencies": {
     "@ai-sdk/langchain": "^2.0.211",
+    "@fastify/cookie": "^11.1.2",
     "@fastify/cors": "^10.0.1",
     "@langchain/anthropic": "^1.4.1",
     "@langchain/core": "^1.1.49",

@@ -1,5 +1,12 @@
-import { afterAll, afterEach, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 
+import {
+  CONCEPT_MONARCHIE,
+  CONCEPT_WATERLOO,
+  provisionLesson,
+  TEST_LESSON_ID,
+  TEST_STUDENT_ID,
+} from "../../test/fixtures.js";
 import { prisma } from "../db/client.js";
 import {
   appendSessionTraceEntry,
@@ -8,10 +15,14 @@ import {
   startSessionTrace,
 } from "./session-trace.js";
 
-const STUDENT = "10000000-0000-4000-8000-000000000001";
-const LESSON = "11111111-1111-4111-8111-111111111111";
-const WATERLOO = "11111111-1111-4111-8111-000000000101";
-const MONARCHIE = "11111111-1111-4111-8111-000000000102";
+const STUDENT = TEST_STUDENT_ID;
+const LESSON = TEST_LESSON_ID;
+const WATERLOO = CONCEPT_WATERLOO;
+const MONARCHIE = CONCEPT_MONARCHIE;
+
+beforeAll(async () => {
+  await provisionLesson();
+});
 
 afterEach(async () => {
   await prisma.sessionTrace.deleteMany();

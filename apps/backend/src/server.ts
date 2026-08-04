@@ -3,6 +3,7 @@ import "dotenv/config";
 import { Readable } from "node:stream";
 
 import { toBaseMessages, toUIMessageStream } from "@ai-sdk/langchain";
+import cookie from "@fastify/cookie";
 import cors from "@fastify/cors";
 import { INTENTS, type TutorUIMessage } from "@tuteur/shared";
 import {
@@ -14,7 +15,10 @@ import { Command } from "@langchain/langgraph";
 import Fastify from "fastify";
 import { z } from "zod";
 
+import { authRoutes, sessionOf } from "./auth/routes.js";
+import { resolveAuthSecret } from "./auth/secret.js";
 import { createCheckpointer } from "./checkpoint/index.js";
+import { prisma } from "./db/client.js";
 import type { RoutingPhase } from "./graphs/phase.js";
 import { buildRouterGraph, type RouterState } from "./graphs/router.graph.js";
 import { withoutInternalNodes } from "./graphs/ui-stream.js";
@@ -31,7 +35,11 @@ const BODY_LIMIT_BYTES = 25 * 1024 * 1024;
 const app = Fastify({ logger: true, bodyLimit: BODY_LIMIT_BYTES });
 
 // Permissive CORS for local dev (Vite frontend on a different port).
-await app.register(cors, { origin: true });
+await app.register(cors, { origin: true, credentials: true });
+
+const authSecret = resolveAuthSecret((message) => app.log.warn(message));
+await app.register(cookie);
+await app.register(authRoutes, { secret: authSecret });
 
 // Start OpenTelemetry → Langfuse before serving (no-op without keys).
 if (startObservability()) {
@@ -62,12 +70,28 @@ const ChatBodySchema = z.object({
 app.get("/health", async () => ({ status: "ok", intents: INTENTS }));
 
 app.post("/api/chat", async (request, reply) => {
+  // The chat is the child's space: a valid child session identifies the
+  // student, and the conversation thread is bound to that student (not to a
+  // client-chosen id), so each child keeps their own persistent session.
+  const claims = sessionOf(request, authSecret);
+  if (!claims || claims.role !== "child") {
+    reply.code(401);
+    return { error: "child session required" };
+  }
+  const student = await prisma.student.findUnique({
+    where: { id: claims.sub },
+  });
+  if (!student) {
+    reply.code(401);
+    return { error: "child session required" };
+  }
+
   const parsed = ChatBodySchema.safeParse(request.body);
   if (!parsed.success) {
     reply.code(400);
     return { error: "invalid chat request body" };
   }
-  const threadId = parsed.data.id ?? "default";
+  const threadId = `student-${student.id}`;
 
   const uiMessages = await validateUIMessages<TutorUIMessage>({
     messages: parsed.data.messages,
@@ -88,9 +112,10 @@ app.post("/api/chat", async (request, reply) => {
   const command = parsed.data.command;
   const input: {
     messages: typeof messages;
+    studentId: string;
     lessonId?: string;
     phase?: RoutingPhase;
-  } = { messages };
+  } = { messages, studentId: student.id };
   if (command?.kind === "revise_lesson") {
     input.lessonId = command.lessonId;
     input.phase = "entering_revise";

@@ -17,8 +17,10 @@ export function getLessonWithConcepts(lessonId: string) {
 
 // Lightweight lesson list for the deterministic resolver: title + theme + the
 // concept labels (so a lesson can be matched by its subject, not only its title).
-export function getLessonsForResolution() {
+// Scoped to the student — each child only ever resolves against their own corpus.
+export function getLessonsForResolution(studentId: string) {
   return prisma.lesson.findMany({
+    where: { studentId },
     orderBy: { createdAt: "asc" },
     select: {
       id: true,
