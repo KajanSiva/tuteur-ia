@@ -1,19 +1,29 @@
 import type { ChangeEvent, FormEvent } from "react";
 import { useEffect, useRef, useState } from "react";
 import { useChat } from "@ai-sdk/react";
-import { DefaultChatTransport } from "ai";
+import { DefaultChatTransport, generateId } from "ai";
 import type {
   ActionCommand,
   AuthUser,
+  ChatCommand,
   ChipAction,
   ConfirmOverwrite,
   TutorUIMessage,
 } from "@tuteur/shared";
-import { ImagePlus, Loader2, LogOut, Send, Sparkles, X } from "lucide-react";
+import {
+  ImagePlus,
+  Loader2,
+  LogOut,
+  Send,
+  Sparkles,
+  Square,
+  X,
+} from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ChatEmptyState } from "@/components/EmptyState";
+import { ChatError } from "@/components/ChatError";
 import { MessageBubble } from "@/components/MessageBubble";
 
 const transport = new DefaultChatTransport<TutorUIMessage>({ api: "/api/chat" });
@@ -27,6 +37,18 @@ const DEFAULT_INGEST_TEXT = "Voici une nouvelle leçon, peux-tu la prendre en co
 // — keeping payloads small (well under the body limit) and vision tokens cheap.
 const MAX_IMAGE_EDGE = 1568;
 const JPEG_QUALITY = 0.85;
+
+// How long a turn may stay silent before the child is let go of it. Counted on
+// silence, not on total duration — a long reply streams continuously, while the
+// ingestion's vision call legitimately sends nothing while it reads the photos.
+// Nothing else would ever end the wait: browsers do not time fetches out.
+const IDLE_TIMEOUT_MS = 60_000;
+
+// Shown in place of the reply when a turn is given up on. Both end the same way
+// — the turn is still pending on the thread, so retrying resumes it.
+const TIMEOUT_MESSAGE =
+  "Je ne reçois plus de réponse. Vérifie ta connexion, puis réessaie — ta leçon n'est pas perdue.";
+const STOPPED_MESSAGE = "J'ai arrêté. Tu peux réessayer quand tu veux.";
 
 // The backend ships its own data shapes; validate the array shape before use.
 function actionsOf(data: unknown): ChipAction[] {
@@ -110,36 +132,67 @@ export default function App({
   onLogout: () => void;
 }) {
   const [progress, setProgress] = useState<string | null>(null);
-  const { messages, sendMessage, status } = useChat<TutorUIMessage>({
-    transport,
-    onData: (part) => {
-      if (
-        part.type === "data-progress" &&
-        part.data &&
-        typeof part.data === "object" &&
-        "message" in part.data &&
-        typeof part.data.message === "string"
-      ) {
-        setProgress(part.data.message);
-      }
-    },
-  });
+  // One conversation id per mount: the backend derives the graph thread from it,
+  // so opening the app starts a fresh discussion — matching the empty transcript
+  // shown here. Persisting this id (rather than minting one) is what would let a
+  // child resume an earlier discussion.
+  const [conversationId] = useState(() => generateId());
+  const { messages, sendMessage, status, error, regenerate, clearError, stop } =
+    useChat<TutorUIMessage>({
+      id: conversationId,
+      transport,
+      onData: (part) => {
+        if (
+          part.type === "data-progress" &&
+          part.data &&
+          typeof part.data === "object" &&
+          "message" in part.data &&
+          typeof part.data.message === "string"
+        ) {
+          setProgress(part.data.message);
+        }
+      },
+    });
   const [input, setInput] = useState("");
   const [images, setImages] = useState<File[]>([]);
+  const [givenUp, setGivenUp] = useState<"timeout" | "stopped" | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
+  const lastActivity = useRef(Date.now());
   const busy = status === "submitted" || status === "streaming";
 
-  // The progress signal is transient: clear it once the turn settles.
+  // The progress signal is transient: clear it once the turn settles. A new turn
+  // also clears whatever the previous one was given up on.
   useEffect(() => {
-    if (!busy) setProgress(null);
+    if (busy) setGivenUp(null);
+    else setProgress(null);
   }, [busy]);
 
-  // Keep the latest message in view — on a new turn and as a reply streams in,
-  // so the child always sees that the tutor answered.
+  // Anything arriving from the backend counts as the turn being alive: a text
+  // delta grows `messages`, the ingestion's vision step pushes `progress`.
+  useEffect(() => {
+    lastActivity.current = Date.now();
+  }, [messages, progress, status]);
+
+  // The watchdog. Without it a dropped connection leaves the child on spinning
+  // dots with the composer disabled, forever — the only way out being a page
+  // reload, which loses the discussion.
+  useEffect(() => {
+    if (!busy) return;
+    const timer = setInterval(() => {
+      if (Date.now() - lastActivity.current >= IDLE_TIMEOUT_MS) {
+        setGivenUp("timeout");
+        void stop();
+      }
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [busy, stop]);
+
+  // Keep the latest message in view — on a new turn, as a reply streams in, and
+  // when a turn fails, so the child always sees how the tutor answered.
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
-  }, [messages, busy]);
+  }, [messages, busy, error, givenUp]);
 
   function pickImages(event: ChangeEvent<HTMLInputElement>) {
     const picked = event.target.files;
@@ -167,6 +220,24 @@ export default function App({
     void sendMessage({ text: label }, { body: { command } });
   }
 
+  // Replays a turn whose run failed. The message is already committed to the
+  // graph thread, so the retry carries the retry_turn command — the backend
+  // resumes the thread's pending work instead of taking the message again.
+  function retry() {
+    if (busy || messages.length === 0) return;
+    clearError();
+    setGivenUp(null);
+    const command: ChatCommand = { kind: "retry_turn" };
+    void regenerate({ body: { command } });
+  }
+
+  // Hanging up closes the request, which the backend reads as "nobody is
+  // listening" and aborts the run on — so a stopped turn stops costing.
+  function giveUp() {
+    setGivenUp("stopped");
+    void stop();
+  }
+
   // Show a waiting indicator while a reply is pending and no assistant text has
   // started streaming yet (deterministic turns never stream tokens, so the dots
   // cover the whole wait). The ingestion vision step replaces it with its own
@@ -184,6 +255,15 @@ export default function App({
   const awaitingConfirm =
     lastMessage?.parts.some((part) => part.type === "data-confirm") ?? false;
   const inputBlocked = busy || awaitingConfirm;
+
+  // A turn ends badly in three ways: the backend reported an error, the wait
+  // timed out, or the child stopped it. All three land on the same card, whose
+  // retry resumes the turn still pending on the thread.
+  const failure = givenUp
+    ? givenUp === "timeout"
+      ? TIMEOUT_MESSAGE
+      : STOPPED_MESSAGE
+    : (error?.message ?? null);
 
   async function submit(event: FormEvent) {
     event.preventDefault();
@@ -309,6 +389,11 @@ export default function App({
             }
           });
         })}
+        {failure && (
+          <div className="flex justify-start">
+            <ChatError message={failure} onRetry={retry} retrying={busy} />
+          </div>
+        )}
         {showThinking && (
           <div className="flex justify-start">
             <div className="flex items-center gap-2 rounded-3xl rounded-bl-lg border border-border bg-card px-4 py-2.5 text-sm text-muted-foreground shadow-sm">
@@ -376,15 +461,28 @@ export default function App({
           }
           disabled={inputBlocked}
         />
-        <Button
-          type="submit"
-          size="icon"
-          className="shrink-0 rounded-2xl"
-          disabled={inputBlocked}
-          aria-label="Envoyer"
-        >
-          <Send />
-        </Button>
+        {busy ? (
+          <Button
+            type="button"
+            size="icon"
+            variant="secondary"
+            className="shrink-0 rounded-2xl"
+            onClick={giveUp}
+            aria-label="Arrêter"
+          >
+            <Square />
+          </Button>
+        ) : (
+          <Button
+            type="submit"
+            size="icon"
+            className="shrink-0 rounded-2xl"
+            disabled={inputBlocked}
+            aria-label="Envoyer"
+          >
+            <Send />
+          </Button>
+        )}
       </form>
     </div>
   );

@@ -17,6 +17,8 @@ import { z } from "zod";
 
 import { authRoutes, sessionOf } from "./auth/routes.js";
 import { resolveAuthSecret } from "./auth/secret.js";
+import { userFacingError } from "./chat/errors.js";
+import { chatThreadId, ConversationIdSchema } from "./chat/thread.js";
 import { createCheckpointer } from "./checkpoint/index.js";
 import { prisma } from "./db/client.js";
 import type { RoutingPhase } from "./graphs/phase.js";
@@ -31,6 +33,13 @@ import {
 // Lesson photos arrive inline as base64 file parts; the client downscales them,
 // but a multi-page lesson still needs headroom over Fastify's 1 MB default.
 const BODY_LIMIT_BYTES = 25 * 1024 * 1024;
+
+// Hard ceiling on a single turn. Nothing else bounds one: Fastify's request and
+// connection timeouts default to 0, and the LLM SDK arms its own timeout only
+// until the response headers arrive — a stream that goes silent afterwards is
+// never cut. The client gives up sooner; this is the backstop for a run whose
+// client is already gone.
+const TURN_TIMEOUT_MS = 3 * 60 * 1000;
 
 const app = Fastify({ logger: true, bodyLimit: BODY_LIMIT_BYTES });
 
@@ -48,11 +57,12 @@ if (startObservability()) {
 
 const router = buildRouterGraph(await createCheckpointer());
 
-// A structured command a chip dispatches (sent in the request body, not as free
-// text). Only revise_lesson round-trips here; add_lesson is handled on the front.
+// A structured command the front dispatches (sent in the request body, not as
+// free text). add_lesson is handled on the front; the others round-trip here.
 const CommandSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("revise_lesson"), lessonId: z.string() }),
   z.object({ kind: z.literal("add_lesson") }),
+  z.object({ kind: z.literal("retry_turn") }),
   z.object({
     kind: z.literal("resume_overwrite"),
     choice: z.enum(["replace", "keep_both", "cancel"]),
@@ -60,9 +70,10 @@ const CommandSchema = z.discriminatedUnion("kind", [
 ]);
 
 // Envelope of a useChat request. The messages array is validated deeply by
-// validateUIMessages below; here we only assert the transport shape.
+// validateUIMessages below; here we only assert the transport shape. `id` is the
+// client's conversation id and is required: it carries the thread identity.
 const ChatBodySchema = z.object({
-  id: z.string().optional(),
+  id: ConversationIdSchema,
   messages: z.array(z.unknown()),
   command: CommandSchema.optional(),
 });
@@ -70,9 +81,9 @@ const ChatBodySchema = z.object({
 app.get("/health", async () => ({ status: "ok", intents: INTENTS }));
 
 app.post("/api/chat", async (request, reply) => {
-  // The chat is the child's space: a valid child session identifies the
-  // student, and the conversation thread is bound to that student (not to a
-  // client-chosen id), so each child keeps their own persistent session.
+  // The chat is the child's space: a valid child session identifies the student,
+  // and the thread key namespaces the client's conversation id under that
+  // student, so a child can only ever address their own conversations.
   const claims = sessionOf(request, authSecret);
   if (!claims || claims.role !== "child") {
     reply.code(401);
@@ -91,7 +102,7 @@ app.post("/api/chat", async (request, reply) => {
     reply.code(400);
     return { error: "invalid chat request body" };
   }
-  const threadId = `student-${student.id}`;
+  const threadId = chatThreadId(student.id, parsed.data.id);
 
   const uiMessages = await validateUIMessages<TutorUIMessage>({
     messages: parsed.data.messages,
@@ -131,20 +142,46 @@ app.post("/api/chat", async (request, reply) => {
   );
   const resumeChoice =
     command?.kind === "resume_overwrite" ? command.choice : "cancel";
-  const graphInput = wasInterrupted
-    ? (new Command({ resume: resumeChoice }) as Parameters<
-        typeof router.stream
-      >[0])
-    : input;
+
+  // Retrying a turn that failed mid-flight replays the checkpoint's pending task
+  // instead of feeding the message again: the failed run already committed the
+  // student's message to the thread, so re-sending it would append a duplicate.
+  // With nothing pending (the turn did complete) the message is fed as usual.
+  const retrying =
+    command?.kind === "retry_turn" && (before.next ?? []).length > 0;
+
+  type GraphInput = Parameters<typeof router.stream>[0];
+  let graphInput: GraphInput = input;
+  if (wasInterrupted) {
+    graphInput = new Command({ resume: resumeChoice });
+  } else if (retrying) {
+    graphInput = null;
+  }
 
   // One Langfuse trace per turn; sessionId = thread_id ties a séance together.
   // Passed via callbacks, it traces every node and model call underneath.
   const traceHandler = createTraceHandler(threadId);
 
+  // Bounds the run at both ends. LangGraph passes the signal down to the model
+  // call, which aborts the HTTP request even mid-stream, so this is what stops a
+  // silent upstream from pinning a turn forever. Aborting leaves the turn
+  // pending on the thread, which is exactly what a retry resumes.
+  const controller = new AbortController();
+  const deadline = setTimeout(() => controller.abort(), TURN_TIMEOUT_MS);
+  let settled = false;
+  // The client hung up (tab closed, network gone, or the child pressed stop):
+  // finish nothing on their behalf and stop spending tokens on a reply no one
+  // will read.
+  request.raw.on("close", () => {
+    if (!settled) {
+      controller.abort();
+    }
+  });
+
   const stream = createUIMessageStream({
     onError: (error) => {
-      app.log.error({ err: error }, "ui stream execute failed");
-      return "An error occurred.";
+      app.log.error({ err: error, threadId }, "ui stream execute failed");
+      return userFacingError(error);
     },
     execute: async ({ writer }) => {
       try {
@@ -153,6 +190,7 @@ app.post("/api/chat", async (request, reply) => {
           // via config.writer; the adapter maps them to `data-*` UI parts.
           streamMode: ["messages", "values", "custom"],
           ...config,
+          signal: controller.signal,
           ...(traceHandler ? { callbacks: [traceHandler] } : {}),
         });
 
@@ -215,6 +253,8 @@ app.post("/api/chat", async (request, reply) => {
           });
         }
       } finally {
+        settled = true;
+        clearTimeout(deadline);
         // Flush this turn's spans to Langfuse (no-op when disabled).
         await flushObservability();
       }

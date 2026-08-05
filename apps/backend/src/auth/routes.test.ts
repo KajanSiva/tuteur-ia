@@ -49,7 +49,7 @@ async function registerParent(username = "papa") {
     payload: { displayName: "Papa", username, password: "secret-parent" },
   });
   if (response.statusCode === 200) {
-    const { user } = response.json() as { user: { id: string } };
+    const { user } = response.json<{ user: { id: string } }>();
     createdParentIds.push(user.id);
   }
   return response;
@@ -72,7 +72,7 @@ async function createChild(
     },
   });
   if (response.statusCode === 200) {
-    const { child } = response.json() as { child: { id: string } };
+    const { child } = response.json<{ child: { id: string } }>();
     createdStudentIds.push(child.id);
   }
   return response;
@@ -92,10 +92,10 @@ describe("onboarding and login", () => {
       url: "/api/auth/state",
       cookies: { tuteur_session: cookieValue },
     });
-    const state = after.json() as {
+    const state = after.json<{
       initialized: boolean;
       user: { role: string; displayName: string };
-    };
+    }>();
     expect(state.initialized).toBe(true);
     expect(state.user).toMatchObject({ role: "parent", displayName: "Papa" });
   });
@@ -141,7 +141,7 @@ describe("onboarding and login", () => {
       url: "/api/auth/state",
       cookies: { tuteur_session: sessionCookieOf(login) },
     });
-    expect((state.json() as { user: unknown }).user).toMatchObject({
+    expect(state.json<{ user: unknown }>().user).toMatchObject({
       role: "child",
       displayName: "Zoé",
       gradeLevel: "CE2",
@@ -220,7 +220,7 @@ describe("child account management", () => {
   it("rolls up per-lesson mastery counts for the parent view", async () => {
     const parentCookie = sessionCookieOf(await registerParent());
     const createResponse = await createChild(parentCookie);
-    const { child } = createResponse.json() as { child: { id: string } };
+    const { child } = createResponse.json<{ child: { id: string } }>();
 
     const lesson = await prisma.lesson.create({
       data: {
@@ -239,17 +239,20 @@ describe("child account management", () => {
       include: { concepts: { orderBy: { label: "asc" } } },
     });
     const [condensation, evaporation] = lesson.concepts;
+    if (!condensation || !evaporation) {
+      throw new Error("expected the lesson to have been created with 3 concepts");
+    }
     await prisma.mastery.createMany({
       data: [
         {
           studentId: child.id,
-          conceptId: evaporation!.id,
+          conceptId: evaporation.id,
           level: "secure",
           changedBy: "test",
         },
         {
           studentId: child.id,
-          conceptId: condensation!.id,
+          conceptId: condensation.id,
           level: "developing",
           changedBy: "test",
         },
@@ -262,7 +265,7 @@ describe("child account management", () => {
       cookies: { tuteur_session: parentCookie },
     });
     expect(list.statusCode).toBe(200);
-    const { children } = list.json() as { children: ChildOverview[] };
+    const { children } = list.json<{ children: ChildOverview[] }>();
     const zoe = children.find((c) => c.id === child.id);
     expect(zoe).toBeDefined();
     expect(zoe?.gradeLevel).toBe("CE2");

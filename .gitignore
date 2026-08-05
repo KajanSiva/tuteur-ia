@@ -3,6 +3,7 @@ dist
 .turbo
 **/src/generated/
 .uploads/
+sample-files/
 *.log
 .env
 .env.*
