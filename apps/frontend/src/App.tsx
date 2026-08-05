@@ -5,6 +5,7 @@ import { DefaultChatTransport, generateId } from "ai";
 import type {
   ActionCommand,
   AuthUser,
+  ChatCommand,
   ChipAction,
   ConfirmOverwrite,
   TutorUIMessage,
@@ -14,6 +15,7 @@ import { ImagePlus, Loader2, LogOut, Send, Sparkles, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ChatEmptyState } from "@/components/EmptyState";
+import { ChatError } from "@/components/ChatError";
 import { MessageBubble } from "@/components/MessageBubble";
 
 const transport = new DefaultChatTransport<TutorUIMessage>({ api: "/api/chat" });
@@ -115,21 +117,22 @@ export default function App({
   // shown here. Persisting this id (rather than minting one) is what would let a
   // child resume an earlier discussion.
   const [conversationId] = useState(() => generateId());
-  const { messages, sendMessage, status } = useChat<TutorUIMessage>({
-    id: conversationId,
-    transport,
-    onData: (part) => {
-      if (
-        part.type === "data-progress" &&
-        part.data &&
-        typeof part.data === "object" &&
-        "message" in part.data &&
-        typeof part.data.message === "string"
-      ) {
-        setProgress(part.data.message);
-      }
-    },
-  });
+  const { messages, sendMessage, status, error, regenerate, clearError } =
+    useChat<TutorUIMessage>({
+      id: conversationId,
+      transport,
+      onData: (part) => {
+        if (
+          part.type === "data-progress" &&
+          part.data &&
+          typeof part.data === "object" &&
+          "message" in part.data &&
+          typeof part.data.message === "string"
+        ) {
+          setProgress(part.data.message);
+        }
+      },
+    });
   const [input, setInput] = useState("");
   const [images, setImages] = useState<File[]>([]);
   const fileInput = useRef<HTMLInputElement>(null);
@@ -141,11 +144,11 @@ export default function App({
     if (!busy) setProgress(null);
   }, [busy]);
 
-  // Keep the latest message in view — on a new turn and as a reply streams in,
-  // so the child always sees that the tutor answered.
+  // Keep the latest message in view — on a new turn, as a reply streams in, and
+  // when a turn fails, so the child always sees how the tutor answered.
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
-  }, [messages, busy]);
+  }, [messages, busy, error]);
 
   function pickImages(event: ChangeEvent<HTMLInputElement>) {
     const picked = event.target.files;
@@ -171,6 +174,16 @@ export default function App({
       return;
     }
     void sendMessage({ text: label }, { body: { command } });
+  }
+
+  // Replays a turn whose run failed. The message is already committed to the
+  // graph thread, so the retry carries the retry_turn command — the backend
+  // resumes the thread's pending work instead of taking the message again.
+  function retry() {
+    if (busy || messages.length === 0) return;
+    clearError();
+    const command: ChatCommand = { kind: "retry_turn" };
+    void regenerate({ body: { command } });
   }
 
   // Show a waiting indicator while a reply is pending and no assistant text has
@@ -315,6 +328,11 @@ export default function App({
             }
           });
         })}
+        {error && (
+          <div className="flex justify-start">
+            <ChatError message={error.message} onRetry={retry} retrying={busy} />
+          </div>
+        )}
         {showThinking && (
           <div className="flex justify-start">
             <div className="flex items-center gap-2 rounded-3xl rounded-bl-lg border border-border bg-card px-4 py-2.5 text-sm text-muted-foreground shadow-sm">

@@ -17,6 +17,7 @@ import { z } from "zod";
 
 import { authRoutes, sessionOf } from "./auth/routes.js";
 import { resolveAuthSecret } from "./auth/secret.js";
+import { userFacingError } from "./chat/errors.js";
 import { chatThreadId, ConversationIdSchema } from "./chat/thread.js";
 import { createCheckpointer } from "./checkpoint/index.js";
 import { prisma } from "./db/client.js";
@@ -49,11 +50,12 @@ if (startObservability()) {
 
 const router = buildRouterGraph(await createCheckpointer());
 
-// A structured command a chip dispatches (sent in the request body, not as free
-// text). Only revise_lesson round-trips here; add_lesson is handled on the front.
+// A structured command the front dispatches (sent in the request body, not as
+// free text). add_lesson is handled on the front; the others round-trip here.
 const CommandSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("revise_lesson"), lessonId: z.string() }),
   z.object({ kind: z.literal("add_lesson") }),
+  z.object({ kind: z.literal("retry_turn") }),
   z.object({
     kind: z.literal("resume_overwrite"),
     choice: z.enum(["replace", "keep_both", "cancel"]),
@@ -133,11 +135,21 @@ app.post("/api/chat", async (request, reply) => {
   );
   const resumeChoice =
     command?.kind === "resume_overwrite" ? command.choice : "cancel";
-  const graphInput = wasInterrupted
-    ? (new Command({ resume: resumeChoice }) as Parameters<
-        typeof router.stream
-      >[0])
-    : input;
+
+  // Retrying a turn that failed mid-flight replays the checkpoint's pending task
+  // instead of feeding the message again: the failed run already committed the
+  // student's message to the thread, so re-sending it would append a duplicate.
+  // With nothing pending (the turn did complete) the message is fed as usual.
+  const retrying =
+    command?.kind === "retry_turn" && (before.next ?? []).length > 0;
+
+  type GraphInput = Parameters<typeof router.stream>[0];
+  let graphInput: GraphInput = input;
+  if (wasInterrupted) {
+    graphInput = new Command({ resume: resumeChoice });
+  } else if (retrying) {
+    graphInput = null;
+  }
 
   // One Langfuse trace per turn; sessionId = thread_id ties a séance together.
   // Passed via callbacks, it traces every node and model call underneath.
@@ -145,8 +157,8 @@ app.post("/api/chat", async (request, reply) => {
 
   const stream = createUIMessageStream({
     onError: (error) => {
-      app.log.error({ err: error }, "ui stream execute failed");
-      return "An error occurred.";
+      app.log.error({ err: error, threadId }, "ui stream execute failed");
+      return userFacingError(error);
     },
     execute: async ({ writer }) => {
       try {
