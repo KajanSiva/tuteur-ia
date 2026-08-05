@@ -1,7 +1,7 @@
 import type { ChangeEvent, FormEvent } from "react";
 import { useEffect, useRef, useState } from "react";
 import { useChat } from "@ai-sdk/react";
-import { DefaultChatTransport } from "ai";
+import { DefaultChatTransport, generateId } from "ai";
 import type {
   ActionCommand,
   AuthUser,
@@ -110,7 +110,13 @@ export default function App({
   onLogout: () => void;
 }) {
   const [progress, setProgress] = useState<string | null>(null);
+  // One conversation id per mount: the backend derives the graph thread from it,
+  // so opening the app starts a fresh discussion — matching the empty transcript
+  // shown here. Persisting this id (rather than minting one) is what would let a
+  // child resume an earlier discussion.
+  const [conversationId] = useState(() => generateId());
   const { messages, sendMessage, status } = useChat<TutorUIMessage>({
+    id: conversationId,
     transport,
     onData: (part) => {
       if (

@@ -17,6 +17,7 @@ import { z } from "zod";
 
 import { authRoutes, sessionOf } from "./auth/routes.js";
 import { resolveAuthSecret } from "./auth/secret.js";
+import { chatThreadId, ConversationIdSchema } from "./chat/thread.js";
 import { createCheckpointer } from "./checkpoint/index.js";
 import { prisma } from "./db/client.js";
 import type { RoutingPhase } from "./graphs/phase.js";
@@ -60,9 +61,10 @@ const CommandSchema = z.discriminatedUnion("kind", [
 ]);
 
 // Envelope of a useChat request. The messages array is validated deeply by
-// validateUIMessages below; here we only assert the transport shape.
+// validateUIMessages below; here we only assert the transport shape. `id` is the
+// client's conversation id and is required: it carries the thread identity.
 const ChatBodySchema = z.object({
-  id: z.string().optional(),
+  id: ConversationIdSchema,
   messages: z.array(z.unknown()),
   command: CommandSchema.optional(),
 });
@@ -70,9 +72,9 @@ const ChatBodySchema = z.object({
 app.get("/health", async () => ({ status: "ok", intents: INTENTS }));
 
 app.post("/api/chat", async (request, reply) => {
-  // The chat is the child's space: a valid child session identifies the
-  // student, and the conversation thread is bound to that student (not to a
-  // client-chosen id), so each child keeps their own persistent session.
+  // The chat is the child's space: a valid child session identifies the student,
+  // and the thread key namespaces the client's conversation id under that
+  // student, so a child can only ever address their own conversations.
   const claims = sessionOf(request, authSecret);
   if (!claims || claims.role !== "child") {
     reply.code(401);
@@ -91,7 +93,7 @@ app.post("/api/chat", async (request, reply) => {
     reply.code(400);
     return { error: "invalid chat request body" };
   }
-  const threadId = `student-${student.id}`;
+  const threadId = chatThreadId(student.id, parsed.data.id);
 
   const uiMessages = await validateUIMessages<TutorUIMessage>({
     messages: parsed.data.messages,
