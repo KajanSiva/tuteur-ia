@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { isTransientError, userFacingError } from "./errors.js";
+import { isAbortError, isTransientError, userFacingError } from "./errors.js";
 
 describe("isTransientError", () => {
   it("reads an overload arriving mid-stream, where there is no status", () => {
@@ -32,7 +32,30 @@ describe("isTransientError", () => {
   });
 });
 
+describe("isAbortError", () => {
+  it("reads the deadline or the client hanging up", () => {
+    expect(isAbortError(Object.assign(new Error("x"), { name: "AbortError" }))).toBe(
+      true,
+    );
+    expect(isAbortError(new Error("Aborted"))).toBe(true);
+  });
+
+  it("does not mistake an unrelated failure for a give-up", () => {
+    expect(isAbortError(new Error("connection reset"))).toBe(false);
+    expect(isAbortError(null)).toBe(false);
+  });
+});
+
 describe("userFacingError", () => {
+  it("says the wait was given up on, not that something broke", () => {
+    const message = userFacingError(
+      Object.assign(new Error("The operation was aborted"), {
+        name: "AbortError",
+      }),
+    );
+    expect(message).toContain("trop de temps");
+  });
+
 
   it("tells the child to wait only when waiting helps", () => {
     const transient = userFacingError(

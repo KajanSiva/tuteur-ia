@@ -38,6 +38,37 @@ function flakyGraph(failures: number) {
     .compile({ checkpointer: new MemorySaver() });
 }
 
+// A graph whose node hangs until the run's signal fires — a model call whose
+// stream went silent, which is what the turn deadline and the client hanging up
+// both have to cut through. `reached` resolves once the node is running, so the
+// abort lands mid-turn rather than before the run has started.
+function hangingGraph() {
+  let calls = 0;
+  let enter: () => void = () => {};
+  const reached = new Promise<void>((resolve) => {
+    enter = resolve;
+  });
+  const graph = new StateGraph(State)
+    .addNode("answer", async (_state, runConfig) => {
+      calls += 1;
+      if (calls === 1) {
+        enter();
+        await new Promise((_resolve, reject) => {
+          runConfig.signal?.addEventListener(
+            "abort",
+            () => reject(new Error("Aborted")),
+            { once: true },
+          );
+        });
+      }
+      return { messages: [new AIMessage("ok")], attempts: 1 };
+    })
+    .addEdge(START, "answer")
+    .addEdge("answer", END)
+    .compile({ checkpointer: new MemorySaver() });
+  return { graph, reached };
+}
+
 const config = { configurable: { thread_id: "retry-thread" } };
 
 describe("retrying a failed turn", () => {
@@ -81,6 +112,26 @@ describe("retrying a failed turn", () => {
 
     expect(resent.messages.map((message) => message.content)).toEqual([
       "salut",
+      "salut",
+      "ok",
+    ]);
+  });
+
+  it("leaves an aborted turn resumable, so giving up costs nothing", async () => {
+    const { graph, reached } = hangingGraph();
+    const controller = new AbortController();
+    const run = graph.invoke(
+      { messages: [new HumanMessage("salut")] },
+      { ...config, signal: controller.signal },
+    );
+    await reached;
+    controller.abort();
+    await expect(run).rejects.toThrow();
+
+    expect((await graph.getState(config)).next).toEqual(["answer"]);
+
+    const resumed = await graph.invoke(null, config);
+    expect(resumed.messages.map((message) => message.content)).toEqual([
       "salut",
       "ok",
     ]);

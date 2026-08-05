@@ -5,6 +5,8 @@ const TRANSIENT =
   "Le service est un peu surchargé en ce moment. Réessaie dans un instant — ta leçon n'est pas perdue.";
 const GENERIC =
   "Je n'ai pas réussi à répondre à ce message. Ce n'est pas de ta faute — tu peux réessayer.";
+const ABORTED =
+  "Ça a pris trop de temps et j'ai arrêté d'attendre. Réessaie — ta leçon n'est pas perdue.";
 
 // Upstream statuses that mean "come back later": rate limited, overloaded, or a
 // gateway hiccup.
@@ -34,6 +36,21 @@ export function isTransientError(error: unknown): boolean {
   return TRANSIENT_CODES.some((code) => message.includes(code));
 }
 
+// A turn cut by the deadline or by the client hanging up. Whoever still reads
+// this is waiting on a turn that was given up on, not on a broken one.
+export function isAbortError(error: unknown): boolean {
+  if (typeof error !== "object" || error === null) {
+    return false;
+  }
+  if ("name" in error && error.name === "AbortError") {
+    return true;
+  }
+  return error instanceof Error && /\baborted\b/i.test(error.message);
+}
+
 export function userFacingError(error: unknown): string {
+  if (isAbortError(error)) {
+    return ABORTED;
+  }
   return isTransientError(error) ? TRANSIENT : GENERIC;
 }

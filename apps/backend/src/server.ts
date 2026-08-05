@@ -34,6 +34,13 @@ import {
 // but a multi-page lesson still needs headroom over Fastify's 1 MB default.
 const BODY_LIMIT_BYTES = 25 * 1024 * 1024;
 
+// Hard ceiling on a single turn. Nothing else bounds one: Fastify's request and
+// connection timeouts default to 0, and the LLM SDK arms its own timeout only
+// until the response headers arrive — a stream that goes silent afterwards is
+// never cut. The client gives up sooner; this is the backstop for a run whose
+// client is already gone.
+const TURN_TIMEOUT_MS = 3 * 60 * 1000;
+
 const app = Fastify({ logger: true, bodyLimit: BODY_LIMIT_BYTES });
 
 // Permissive CORS for local dev (Vite frontend on a different port).
@@ -155,6 +162,22 @@ app.post("/api/chat", async (request, reply) => {
   // Passed via callbacks, it traces every node and model call underneath.
   const traceHandler = createTraceHandler(threadId);
 
+  // Bounds the run at both ends. LangGraph passes the signal down to the model
+  // call, which aborts the HTTP request even mid-stream, so this is what stops a
+  // silent upstream from pinning a turn forever. Aborting leaves the turn
+  // pending on the thread, which is exactly what a retry resumes.
+  const controller = new AbortController();
+  const deadline = setTimeout(() => controller.abort(), TURN_TIMEOUT_MS);
+  let settled = false;
+  // The client hung up (tab closed, network gone, or the child pressed stop):
+  // finish nothing on their behalf and stop spending tokens on a reply no one
+  // will read.
+  request.raw.on("close", () => {
+    if (!settled) {
+      controller.abort();
+    }
+  });
+
   const stream = createUIMessageStream({
     onError: (error) => {
       app.log.error({ err: error, threadId }, "ui stream execute failed");
@@ -167,6 +190,7 @@ app.post("/api/chat", async (request, reply) => {
           // via config.writer; the adapter maps them to `data-*` UI parts.
           streamMode: ["messages", "values", "custom"],
           ...config,
+          signal: controller.signal,
           ...(traceHandler ? { callbacks: [traceHandler] } : {}),
         });
 
@@ -229,6 +253,8 @@ app.post("/api/chat", async (request, reply) => {
           });
         }
       } finally {
+        settled = true;
+        clearTimeout(deadline);
         // Flush this turn's spans to Langfuse (no-op when disabled).
         await flushObservability();
       }
