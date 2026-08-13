@@ -6,7 +6,7 @@ project overview. This file holds working conventions.
 
 ## Stack
 
-pnpm workspaces + Turborepo, Node 20+.
+pnpm workspaces + Turborepo, Node 20.19+.
 `apps/backend` (Fastify + Prisma + Postgres) · `apps/frontend` (React + Vite +
 Tailwind v4 + shadcn/ui) · `packages/shared` (shared TS contracts).
 

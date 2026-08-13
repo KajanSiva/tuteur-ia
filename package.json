@@ -3,7 +3,7 @@
   "private": true,
   "packageManager": "pnpm@9.14.2",
   "engines": {
-    "node": ">=20"
+    "node": ">=20.19"
   },
   "scripts": {
     "build": "turbo run build",
