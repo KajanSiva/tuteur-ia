@@ -4,7 +4,6 @@ import { Readable } from "node:stream";
 
 import { toBaseMessages, toUIMessageStream } from "@ai-sdk/langchain";
 import cookie from "@fastify/cookie";
-import cors from "@fastify/cors";
 import { INTENTS, type TutorUIMessage } from "@tuteur/shared";
 import {
   createUIMessageStream,
@@ -42,9 +41,6 @@ const BODY_LIMIT_BYTES = 25 * 1024 * 1024;
 const TURN_TIMEOUT_MS = 3 * 60 * 1000;
 
 const app = Fastify({ logger: true, bodyLimit: BODY_LIMIT_BYTES });
-
-// Permissive CORS for local dev (Vite frontend on a different port).
-await app.register(cors, { origin: true, credentials: true });
 
 const authSecret = resolveAuthSecret((message) => app.log.warn(message));
 await app.register(cookie);
