@@ -6,10 +6,10 @@ node_modules
 dist
 **/dist
 **/src/generated
-.env
-.env.*
+**/.env
+**/.env.*
 !**/.env.example
-.uploads
+**/.uploads
 sample-files
 *.log
 .DS_Store

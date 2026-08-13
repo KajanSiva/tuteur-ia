@@ -33,7 +33,8 @@ FROM dependencies AS build
 
 COPY . .
 
-RUN pnpm --filter @tuteur/backend db:generate \
+RUN DATABASE_URL="postgresql://build:build@localhost:5432/build" \
+    pnpm --filter @tuteur/backend db:generate \
     && pnpm build
 
 FROM build AS backend-deploy
