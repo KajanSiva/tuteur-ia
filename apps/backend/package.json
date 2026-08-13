@@ -9,6 +9,9 @@
     "start": "node dist/server.js",
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate dev",
+    "db:deploy": "prisma migrate deploy",
+    "db:checkpoint:setup": "tsx src/checkpoint/setup.ts",
+    "db:bootstrap": "pnpm db:deploy && pnpm db:checkpoint:setup",
     "eval": "tsx src/eval/run-eval.ts",
     "test": "vitest run",
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.test.json"

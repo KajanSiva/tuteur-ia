@@ -55,7 +55,7 @@ if (startObservability()) {
   app.log.info("langfuse observability enabled");
 }
 
-const router = buildRouterGraph(await createCheckpointer());
+const router = buildRouterGraph(createCheckpointer());
 
 // A structured command the front dispatches (sent in the request body, not as
 // free text). add_lesson is handled on the front; the others round-trip here.
