@@ -23,6 +23,7 @@ import { prisma } from "./db/client.js";
 import type { RoutingPhase } from "./graphs/phase.js";
 import { buildRouterGraph, type RouterState } from "./graphs/router.graph.js";
 import { withoutInternalNodes } from "./graphs/ui-stream.js";
+import { createReadinessRoutes } from "./health/readiness.js";
 import {
   createTraceHandler,
   flushObservability,
@@ -75,6 +76,9 @@ const ChatBodySchema = z.object({
 });
 
 app.get("/health", async () => ({ status: "ok", intents: INTENTS }));
+await app.register(
+  createReadinessRoutes({ probe: () => prisma.$queryRaw`SELECT 1` }),
+);
 
 app.post("/api/chat", async (request, reply) => {
   // The chat is the child's space: a valid child session identifies the student,

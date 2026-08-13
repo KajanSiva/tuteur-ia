@@ -20,7 +20,7 @@ services:
         - node
         - -e
         - >-
-          fetch('http://127.0.0.1:3001/health')
+          fetch('http://127.0.0.1:3001/ready')
           .then((response) => { if (!response.ok) process.exit(1); })
           .catch(() => process.exit(1));
       interval: 10s
@@ -46,7 +46,7 @@ services:
         - --quiet
         - --tries=1
         - --spider
-        - http://127.0.0.1:8080/health
+        - http://127.0.0.1:8080/ready
       interval: 10s
       timeout: 5s
       retries: 5
