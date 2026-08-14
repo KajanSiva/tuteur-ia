@@ -11,6 +11,10 @@ services:
       DATABASE_URL: ${DATABASE_URL:?}
       AUTH_SECRET: ${AUTH_SECRET:?}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:?}
+      LANGFUSE_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY:-}
+      LANGFUSE_SECRET_KEY: ${LANGFUSE_SECRET_KEY:-}
+      LANGFUSE_BASE_URL: ${LANGFUSE_BASE_URL:-https://cloud.langfuse.com}
+      LANGFUSE_TRACING_ENVIRONMENT: ${LANGFUSE_TRACING_ENVIRONMENT:-production}
       INGEST_UPLOAD_DIR: /data/uploads
     volumes:
       - lesson_uploads:/data/uploads
