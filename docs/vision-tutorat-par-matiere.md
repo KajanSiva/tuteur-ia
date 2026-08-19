@@ -235,6 +235,35 @@ ActivityModule = {
 - `session_trace` : entrées typées par activité, avec le détail (énoncé posé,
   réponse donnée) — la vue parent et le debug en dépendent.
 
+### Modèles par rôle et appels structurés
+
+**Changer de modèle est déjà de la pure config** (factory par rôle,
+`llm/models.ts` : `LLM_PROVIDER_<ROLE>` / `LLM_MODEL_<ROLE>`) — seule la
+dépendance `@langchain/<provider>` est à installer. Faisable à tout moment,
+indépendamment du reste (« étape 0 »). Méthode pour basculer vers un modèle
+moins cher (ex. `gpt-5.6-luna`) :
+
+- **rôles contraints d'abord** (classifier, evaluate, session_analysis) —
+  sortie structurée validée par zod, risque faible ;
+- **le socratique en dernier** — c'est l'âme du produit : valider avant/après
+  avec le harnais d'eval (`pnpm eval`) ;
+- **le juge reste sur un modèle fort et différent** de celui qu'il évalue ;
+- `ingest_parse` exige un modèle à entrée image.
+
+**Une seule abstraction à ajouter, pas une couche.** LangChain
+(`initChatModel` → `BaseChatModel`) est déjà la couche d'abstraction
+fournisseur — en rajouter une par-dessus serait de la sur-ingénierie. En
+revanche, le motif d'appel structuré (garde `bindTools`, tool forcé par
+`tool_choice`, `safeParse` de `tool_calls[0].args`, repli conservateur en cas
+de sortie malformée) est aujourd'hui dupliqué sur 7 sites dans 6 fichiers.
+À extraire en un helper unique (`llm/structured.ts`, style
+`invokeStructured(role, { tool, schema, messages, fallback })`) : c'est
+précisément là que les différences entre fournisseurs mordent (forme des
+tool-calls, réponses vides, contraintes des modèles de raisonnement — p. ex.
+la température refusée par certains). Un seul endroit à durcir au lieu de
+sept, et chaque nouvelle activité en profite. À faire dans l'étape 1 (le
+contrat d'activité y touche déjà) ou juste avant une bascule de fournisseur.
+
 ### TTS (à intégrer dès la conception)
 
 Périmètre : dictées (indispensable) et consignes lues pour le CE2 (confort).
@@ -247,6 +276,9 @@ changer — c'est un service annexe, pas un pilier.
 
 ## 8. Chemin d'adaptation depuis l'app actuelle
 
+0. *(à tout moment)* **Bascule de modèles** — pure config par rôle (§7),
+   accompagnée de l'extraction du helper d'appel structuré et, pour le
+   socratique, validée par le harnais d'eval.
 1. **Le contrat d'activité (pure architecture).** Le socratique devient le
    premier module du registre ; boucle de séance générique ; `knowledgeKind` ;
    traces typées. Aucune fonctionnalité nouvelle — le pivot modulaire.
