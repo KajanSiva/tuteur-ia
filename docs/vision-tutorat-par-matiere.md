@@ -305,6 +305,33 @@ En parallèle : l'espace parent s'enrichit à chaque étape (il lit les mêmes
 tables) + import de documents côté parent (réutilise le pipeline d'ingestion,
 peut arriver tôt car indépendant).
 
+### Le jalon « les enfants testent »
+
+L'objectif court terme n'est pas la vision complète : c'est un état testable
+par les enfants en autonomie, pour en tirer des apprentissages réels avant
+d'aller plus loin. Le déploiement continu étant en place, chaque étape part en
+production dès qu'elle est verte. Trois conséquences sur le chemin :
+
+- **L'étape 4 se scinde.** 4a — templates déterministes + UI de saisie
+  numérique : rapide, fiabilité totale, l'essentiel de la valeur CE2. 4b —
+  problèmes à génération vérifiée : le morceau le plus incertain du plan
+  (boucle qualité/eval longue), repoussé APRÈS le jalon — l'usage réel dira
+  quels types de problèmes comptent.
+- **L'étape 2 se resserre pré-jalon** : maths uniquement, granularité
+  grossière (domaines → attendus, ~40-60 nœuds par niveau), carte
+  d'avancement minimale. La curation est le pôle de risque temps (du contenu à
+  relire, pas du code) : timeboxée, approfondie post-jalon sur données réelles.
+- **L'étape 5 fait partie du jalon.** Le menu du jour est ce qui crée l'usage
+  autonome quotidien — précisément ce qu'on veut observer. Version jalon
+  simple : régime routine + déclaration d'échéance avec plan à rebours
+  proportionnel, sans optimisation fine.
+
+**Jalon = 0 + 1 + 3 + 2-minimal + 4a + 5-simple.** Post-jalon, piloté par les
+apprentissages : 4b, 6 (dictée, écriture), 7 (collège), approfondissement du
+référentiel, gamification. L'app actuelle déjà déployée (socratique sur les
+matières déclaratives + ingestion photo) est utilisable par les enfants dès
+maintenant — les premières observations n'attendent pas le jalon.
+
 ## 9. Décisions actées
 
 1. **Référentiel de programme par classe** : oui, embarqué et versionné,
