@@ -1,0 +1,249 @@
+name: Deploy to Coolify
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: tuteur-ia-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Migrate then deploy through the private control plane
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: production
+
+    steps:
+      - name: Connect to the tailnet
+        uses: tailscale/github-action@306e68a486fd2350f2bfc3b19fcd143891a4a2d8 # v4
+        with:
+          oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+          audience: ${{ secrets.TS_AUDIENCE }}
+          tags: tag:coolify-deploy
+
+      - name: Run migrations then deploy the runtime
+        shell: bash
+        env:
+          COOLIFY_MIGRATE_DEPLOY_URL: ${{ secrets.COOLIFY_MIGRATE_DEPLOY_URL }}
+          COOLIFY_RUNTIME_DEPLOY_URL: ${{ secrets.COOLIFY_RUNTIME_DEPLOY_URL }}
+          COOLIFY_TOKEN: ${{ secrets.COOLIFY_TOKEN }}
+          EXPECTED_COMMIT: ${{ github.sha }}
+        run: |
+          set -Eeuo pipefail
+
+          validate_deploy_url() {
+            local label="$1"
+            local url="$2"
+            local without_scheme authority host endpoint
+
+            if [[ ! "$url" =~ ^https://[^/?#]+\.ts\.net:8443/api/v1/deploy\?.+$ ]]; then
+              echo "${label} must target a private Tailscale HTTPS endpoint on port 8443." >&2
+              return 1
+            fi
+
+            without_scheme="${url#https://}"
+            authority="${without_scheme%%/*}"
+            host="${authority%:8443}"
+            endpoint="${url%%\?*}"
+
+            if [[ -z "$host" || "$authority" == *"@"* || "$endpoint" != */api/v1/deploy ]]; then
+              echo "${label} is not a valid private Coolify deployment URL." >&2
+              return 1
+            fi
+
+            printf '%s\n' "$host"
+          }
+
+          api_base_from_url() {
+            local endpoint="${1%%\?*}"
+            printf '%s\n' "${endpoint%/deploy}"
+          }
+
+          wait_for_control_plane() {
+            local host="$1"
+
+            for attempt in {1..12}; do
+              if tailscale ping --timeout=5s --c=1 "$host" >/dev/null 2>&1; then
+                echo "The private Coolify control plane is reachable through Tailscale."
+                return 0
+              fi
+
+              echo "Waiting for the private Tailscale peer (${attempt}/12)..."
+              sleep 5
+            done
+
+            echo "The private Coolify control plane is not reachable through Tailscale." >&2
+            return 1
+          }
+
+          trigger_deployment() {
+            local label="$1"
+            local url="$2"
+            local response_file deployment_uuid
+
+            response_file="$(mktemp)"
+
+            if ! curl \
+              --fail-with-body \
+              --silent \
+              --connect-timeout 10 \
+              --retry 2 \
+              --retry-connrefused \
+              --retry-delay 2 \
+              --max-time 30 \
+              --output "$response_file" \
+              --header "Authorization: Bearer ${COOLIFY_TOKEN}" \
+              "$url"; then
+              rm -f "$response_file"
+              echo "Coolify rejected the ${label} deployment request." >&2
+              return 1
+            fi
+
+            if ! deployment_uuid="$(
+              python3 -c '
+          import json
+          import sys
+
+          with open(sys.argv[1], encoding="utf-8") as response:
+              payload = json.load(response)
+
+          deployments = payload.get("deployments")
+          if not isinstance(deployments, list) or len(deployments) != 1:
+              raise SystemExit("Expected exactly one Coolify deployment")
+
+          deployment_uuid = deployments[0].get("deployment_uuid")
+          if not isinstance(deployment_uuid, str) or not deployment_uuid:
+              raise SystemExit("Coolify did not return a deployment UUID")
+
+          print(deployment_uuid)
+          ' "$response_file"
+            )"; then
+              rm -f "$response_file"
+              echo "Coolify returned an unexpected response for ${label}." >&2
+              return 1
+            fi
+
+            rm -f "$response_file"
+            printf '%s\n' "$deployment_uuid"
+          }
+
+          wait_for_deployment() {
+            local label="$1"
+            local deployment_uuid="$2"
+            local api_base="$3"
+            local response_file status deployed_commit
+
+            response_file="$(mktemp)"
+
+            for attempt in {1..120}; do
+              if ! curl \
+                --fail-with-body \
+                --silent \
+                --connect-timeout 10 \
+                --max-time 30 \
+                --output "$response_file" \
+                --header "Authorization: Bearer ${COOLIFY_TOKEN}" \
+                "${api_base}/deployments/${deployment_uuid}"; then
+                rm -f "$response_file"
+                echo "Unable to read the ${label} deployment status." >&2
+                return 1
+              fi
+
+              if ! status="$(
+                python3 -c '
+          import json
+          import sys
+
+          with open(sys.argv[1], encoding="utf-8") as response:
+              payload = json.load(response)
+
+          status = payload.get("status")
+          if not isinstance(status, str) or not status:
+              raise SystemExit("Coolify did not return a deployment status")
+
+          print(status)
+          ' "$response_file"
+              )"; then
+                rm -f "$response_file"
+                echo "Coolify returned an unexpected status response for ${label}." >&2
+                return 1
+              fi
+
+              case "$status" in
+                finished)
+                  deployed_commit="$(
+                    python3 -c '
+          import json
+          import sys
+
+          with open(sys.argv[1], encoding="utf-8") as response:
+              payload = json.load(response)
+
+          commit = payload.get("commit")
+          print(commit if isinstance(commit, str) else "")
+          ' "$response_file"
+                  )"
+                  rm -f "$response_file"
+
+                  if [[ "$deployed_commit" != "$EXPECTED_COMMIT" ]]; then
+                    echo "The ${label} deployment used a commit other than the triggering GitHub SHA." >&2
+                    return 1
+                  fi
+
+                  echo "The ${label} deployment finished successfully for the expected commit."
+                  return 0
+                  ;;
+                failed | cancelled | cancelled-by-user)
+                  rm -f "$response_file"
+                  echo "The ${label} deployment ended with status: ${status}." >&2
+                  return 1
+                  ;;
+                queued | in_progress)
+                  echo "Waiting for the ${label} deployment (${status}, ${attempt}/120)..."
+                  ;;
+                *)
+                  echo "Waiting for the ${label} deployment (status ${status}, ${attempt}/120)..."
+                  ;;
+              esac
+
+              sleep 5
+            done
+
+            rm -f "$response_file"
+            echo "Timed out while waiting for the ${label} deployment." >&2
+            return 1
+          }
+
+          migrate_host="$(validate_deploy_url "Migration URL" "$COOLIFY_MIGRATE_DEPLOY_URL")"
+          runtime_host="$(validate_deploy_url "Runtime URL" "$COOLIFY_RUNTIME_DEPLOY_URL")"
+          migrate_api_base="$(api_base_from_url "$COOLIFY_MIGRATE_DEPLOY_URL")"
+          runtime_api_base="$(api_base_from_url "$COOLIFY_RUNTIME_DEPLOY_URL")"
+
+          if [[ "$COOLIFY_MIGRATE_DEPLOY_URL" == "$COOLIFY_RUNTIME_DEPLOY_URL" ]]; then
+            echo "Migration and runtime deployment URLs must target different resources." >&2
+            exit 1
+          fi
+
+          if [[ "$migrate_host" != "$runtime_host" || "$migrate_api_base" != "$runtime_api_base" ]]; then
+            echo "Migration and runtime must use the same private Coolify control plane." >&2
+            exit 1
+          fi
+
+          wait_for_control_plane "$migrate_host"
+
+          migration_deployment_uuid="$(
+            trigger_deployment "migration" "$COOLIFY_MIGRATE_DEPLOY_URL"
+          )"
+          wait_for_deployment "migration" "$migration_deployment_uuid" "$migrate_api_base"
+
+          runtime_deployment_uuid="$(
+            trigger_deployment "runtime" "$COOLIFY_RUNTIME_DEPLOY_URL"
+          )"
+          wait_for_deployment "runtime" "$runtime_deployment_uuid" "$runtime_api_base"

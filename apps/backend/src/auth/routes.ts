@@ -3,11 +3,14 @@ import type { AuthState, AuthUser, ChildOverview } from "@tuteur/shared";
 import { z } from "zod";
 
 import { prisma } from "../db/client.js";
+import {
+  SESSION_TTL_SECONDS,
+  sessionCookieOptions,
+} from "./cookie-options.js";
 import { hashPassword, verifyPassword } from "./passwords.js";
 import { signSession, type SessionClaims, verifySession } from "./tokens.js";
 
 export const SESSION_COOKIE = "tuteur_session";
-const SESSION_TTL_SECONDS = 30 * 24 * 60 * 60;
 
 // Reads and verifies the session cookie. Null for a missing, malformed,
 // tampered or expired token — the caller decides whether that is a 401.
@@ -26,12 +29,11 @@ function setSessionCookie(
 ): void {
   const exp = Math.floor(Date.now() / 1000) + SESSION_TTL_SECONDS;
   const token = signSession({ ...claims, exp }, secret);
-  void reply.setCookie(SESSION_COOKIE, token, {
-    httpOnly: true,
-    sameSite: "lax",
-    path: "/",
-    maxAge: SESSION_TTL_SECONDS,
-  });
+  void reply.setCookie(
+    SESSION_COOKIE,
+    token,
+    sessionCookieOptions(process.env.NODE_ENV),
+  );
 }
 
 // Usernames are compared and stored lowercase so "Zoe" and "zoe" cannot

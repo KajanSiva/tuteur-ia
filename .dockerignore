@@ -1,0 +1,15 @@
+.git
+.turbo
+**/.turbo
+node_modules
+**/node_modules
+dist
+**/dist
+**/src/generated
+**/.env
+**/.env.*
+!**/.env.example
+**/.uploads
+sample-files
+*.log
+.DS_Store

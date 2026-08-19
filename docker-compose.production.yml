@@ -1,0 +1,62 @@
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: backend
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      PORT: 3001
+      DATABASE_URL: ${DATABASE_URL:?}
+      AUTH_SECRET: ${AUTH_SECRET:?}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:?}
+      LANGFUSE_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY:-}
+      LANGFUSE_SECRET_KEY: ${LANGFUSE_SECRET_KEY:-}
+      LANGFUSE_BASE_URL: ${LANGFUSE_BASE_URL:-https://cloud.langfuse.com}
+      LANGFUSE_TRACING_ENVIRONMENT: ${LANGFUSE_TRACING_ENVIRONMENT:-production}
+      INGEST_UPLOAD_DIR: /data/uploads
+    volumes:
+      - lesson_uploads:/data/uploads
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - >-
+          fetch('http://127.0.0.1:3001/ready')
+          .then((response) => { if (!response.ok) process.exit(1); })
+          .catch(() => process.exit(1));
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    mem_limit: 1536m
+    cpus: 1.5
+
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: frontend
+    restart: unless-stopped
+    depends_on:
+      backend:
+        condition: service_started
+    healthcheck:
+      test:
+        - CMD
+        - wget
+        - --quiet
+        - --tries=1
+        - --spider
+        - http://127.0.0.1:8080/index.html
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    mem_limit: 128m
+    cpus: 0.25
+
+volumes:
+  lesson_uploads:

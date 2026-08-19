@@ -22,6 +22,11 @@ export type ActionCommand =
 
 export type ChipAction = { label: string; command: ActionCommand };
 
+// Every command the chat route accepts in a request body. retry_turn is not a
+// chip: it replays a turn whose run failed (an upstream error, a dropped
+// connection) from the thread's last checkpoint, without re-sending the message.
+export type ChatCommand = ActionCommand | { kind: "retry_turn" };
+
 // Payload of the hard-gate overwrite confirmation (interrupt → data-confirm).
 // The kind tells the front which card to render; options are the labelled
 // choices. Surfaced when an ingested lesson collides with an existing one.

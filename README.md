@@ -46,7 +46,7 @@ The value of this project is in the architecture, not the framework or the UI:
 
 ## Stack
 
-A **pnpm workspaces + Turborepo** monorepo, Node 20+.
+A **pnpm workspaces + Turborepo** monorepo, Node 20.19+.
 
 | Piece | Choice |
 |---|---|
@@ -94,7 +94,7 @@ a subgraph:
 
 ## Getting started
 
-Prerequisites: Node 20+, pnpm, Docker.
+Prerequisites: Node 20.19+, pnpm, Docker.
 
 ```bash
 pnpm install
@@ -122,6 +122,44 @@ pnpm dev
 | `pnpm build` / `pnpm typecheck` | all packages |
 | `pnpm test` | tests (Postgres required; provisions a dedicated `tuteur_test` database) |
 | `pnpm --filter @tuteur/backend eval` | LLM-as-judge eval via Langfuse |
+
+## Production images
+
+The root `Dockerfile` exposes three independently buildable targets:
+
+```bash
+docker build --target migrate -t tuteur-ia-migrate .
+docker build --target backend -t tuteur-ia-backend .
+docker build --target frontend -t tuteur-ia-frontend .
+```
+
+`backend` runs Fastify as the unprivileged Node user on port `3001` and defaults
+`INGEST_UPLOAD_DIR` to `/data/uploads`. Production must mount that path on a
+persistent volume. `frontend` runs unprivileged Nginx on port `8080`, serves the
+Vite build, falls back to `index.html` for client routes, and proxies `/api/*`
+and `/health` to `backend:3001`. Only the frontend is intended for an external
+domain; neither Docker target publishes a host port by itself.
+
+`docker-compose.production.yml` assembles these two targets. It declares no
+host port, custom network, or PostgreSQL container. The deployment platform
+must inject `DATABASE_URL`, `AUTH_SECRET`, and `ANTHROPIC_API_KEY`; lesson
+images are persisted in the named volume mounted at `/data/uploads`.
+
+## Production deployment
+
+Pushes to `main` are deployed by [`.github/workflows/deploy.yml`](.github/workflows/deploy.yml).
+The workflow exchanges GitHub's OIDC identity for a short-lived Tailscale
+identity, reaches the private Coolify control plane, and deploys two resources
+sequentially:
+
+1. the one-shot migration resource, which applies Prisma migrations and
+   initializes the LangGraph checkpointer;
+2. the frontend/backend runtime, triggered only after the migration resource
+   succeeds.
+
+Both deployments must finish on the exact SHA that triggered the workflow.
+Production credentials stay in the protected GitHub environment and Coolify;
+they are never stored in this repository.
 
 ## Repo layout
 

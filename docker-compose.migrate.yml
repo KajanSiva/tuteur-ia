@@ -1,0 +1,9 @@
+services:
+  migrate:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: migrate
+    restart: "no"
+    environment:
+      DATABASE_URL: ${DATABASE_MIGRATION_URL:?DATABASE_MIGRATION_URL is required}
