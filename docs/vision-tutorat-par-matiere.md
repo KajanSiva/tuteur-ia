@@ -135,6 +135,11 @@ Orchestration déterministe, comme aujourd'hui :
 l'enfant accepte d'un tap. Pas de composition à la volée pour l'instant ;
 demander une leçon précise reste possible comme aujourd'hui.
 
+Le modèle « un thread par conversation » (en place depuis le fix
+thread-per-conversation) s'aligne naturellement : **une séance = une
+conversation** — thread frais, état de routage propre, transcript borné ; la
+continuité entre séances vit dans la mémoire durable, pas dans le thread.
+
 **Les échéances (acté).** Le sélecteur poursuit deux régimes, dès sa
 conception : la **routine** (répétition espacée globale) et les **objectifs
 datés**. Une échéance = matière, date, périmètre (leçons/chapitres, ou une
@@ -211,6 +216,11 @@ ActivityModule = {
   peut pas corrompre la mémoire.
 - **La boucle de séance devient générique** : queue/cursor/turns actuels,
   paramétrés par l'activité courante.
+- **Les activités respectent la sémantique de reprise du chat** : timeout de
+  tour, abandon quand le client raccroche, `retry_turn` qui rejoue la tâche en
+  attente du checkpoint. Même règle qu'aujourd'hui : aucun effet de bord
+  irréversible avant la résolution du concept (les écritures mémoire restent
+  au moment de l'avance) — un module d'activité rejouable est un module sûr.
 - **Un registre d'activités** (du code) ; ajouter une activité = un dossier
   avec ses nœuds, ses prompts, ses tests et ses cas d'eval, sans toucher au
   reste. Chaque activité a son harnais d'eval — condition pour itérer vite.
@@ -295,19 +305,23 @@ peut arriver tôt car indépendant).
 
 Le backend est traité comme une API pour N clients. État des lieux : le chat
 est déjà un protocole client-agnostique (POST + flux de parts JSON typées,
-contrats dans `@tuteur/shared`), les threads sont liés à l'élève côté serveur
-(web et mobile partagent la même session), l'ingestion photo et le futur TTS
-sont du HTTP standard. Le seul couplage web est l'auth par cookie.
+contrats dans `@tuteur/shared`), l'ingestion photo et le futur TTS sont du
+HTTP standard. Les conversations sont des threads éphémères par discussion
+(`student-{id}-{conversationId}`, id généré par le client, format contraint
+par `ConversationIdSchema`) ; la mémoire durable, elle, est par élève — un
+enfant qui alterne web et mobile a des discussions distinctes mais une seule
+mémoire. Le seul couplage web restant est l'auth par cookie.
 
 Changements backend requis (petits, à faire au moment du chantier mobile) :
 
 1. **Auth duale** — accepter le token aussi en `Authorization: Bearer` et le
    retourner dans le corps du login ; le mobile le stocke en keychain, le web
    garde son cookie httpOnly.
-2. **HTTPS public** — le déploiement VPS + TLS devient un prérequis (client
-   hors réseau domestique).
+2. **HTTPS public** — ✅ en place : images Docker + CI → déploiement derrière
+   TLS ; le prérequis mobile est satisfait.
 3. **Contrats additifs seulement** — une app installée se met à jour après le
-   backend ; les évolutions de contrat restent rétro-compatibles.
+   backend ; les évolutions de contrat restent rétro-compatibles. Le client
+   mobile génère ses conversation ids et implémente `retry_turn` comme le web.
 4. **Push notifications** (plus tard) — l'ajout FCM/APNs portera le mécanisme
    de communication parent.
 
