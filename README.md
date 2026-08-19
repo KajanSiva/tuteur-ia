@@ -145,6 +145,22 @@ host port, custom network, or PostgreSQL container. The deployment platform
 must inject `DATABASE_URL`, `AUTH_SECRET`, and `ANTHROPIC_API_KEY`; lesson
 images are persisted in the named volume mounted at `/data/uploads`.
 
+## Production deployment
+
+Pushes to `main` are deployed by [`.github/workflows/deploy.yml`](.github/workflows/deploy.yml).
+The workflow exchanges GitHub's OIDC identity for a short-lived Tailscale
+identity, reaches the private Coolify control plane, and deploys two resources
+sequentially:
+
+1. the one-shot migration resource, which applies Prisma migrations and
+   initializes the LangGraph checkpointer;
+2. the frontend/backend runtime, triggered only after the migration resource
+   succeeds.
+
+Both deployments must finish on the exact SHA that triggered the workflow.
+Production credentials stay in the protected GitHub environment and Coolify;
+they are never stored in this repository.
+
 ## Repo layout
 
 ```
