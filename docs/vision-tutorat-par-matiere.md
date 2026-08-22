@@ -1,7 +1,7 @@
 # Vision — un tutorat par matière (primaire & collège)
 
-Document de travail. Les décisions actées au brainstorm sont en §9 ; les
-questions encore ouvertes en §10. Périmètre visé à court terme : CE2 et 6ème ;
+Document de travail. Les décisions actées sont en §9 ; les points délégués à
+l'implémentation en §11. Périmètre visé à court terme : CE2 et 6ème ;
 projection : toute la primaire et le collège.
 
 ## 1. Le problème
@@ -89,6 +89,12 @@ qu'une série de tentatives fasse foi — l'unité de maîtrise), et les **items
 (les exercices/questions générés pour une compétence — jamais des nœuds). Un
 nœud trop large n'est pas évaluable ; un item n'est pas une compétence.
 
+> ⚠️ **À vérifier et ajuster pendant l'implémentation.** La finesse des
+> feuilles évaluables est une hypothèse : si une série de tentatives ne
+> suffit pas à établir la maîtrise d'une feuille (trop large), ou si la carte
+> devient illisible (trop fin), on ajuste la curation — la structure trois
+> couches, elle, ne bouge pas.
+
 Le référentiel lui-même porte **source officielle, année d'effet et version** :
 « versionné dans git » ne suffit pas à interpréter les données anciennes après
 une mise à jour — les codes stables et la version le permettent.
@@ -170,6 +176,12 @@ ingestion et plusieurs révisions — ce n'est pas une frontière métier. C'est
 séance persistée qui porte la reprise après interruption, l'assiduité et le
 taux de complétion que la vue parent affiche.
 
+**Reset produit entre les blocs (acté).** Chaque bloc de révision ouvre un
+thread de conversation neuf et clôt le précédent : un enfant qui enchaîne
+plusieurs séances n'accumule jamais un transcript géant — la fenêtre de
+contexte du LLM est bornée par le bloc, et la continuité entre blocs passe par
+la mémoire durable, pas par le fil de discussion.
+
 **Les échéances (acté).** Le sélecteur poursuit deux régimes, dès sa
 conception : la **routine** (répétition espacée globale) et les **objectifs
 datés**. Une échéance = matière, date, périmètre (leçons/chapitres, ou une
@@ -180,6 +192,10 @@ construit à rebours de la date (couverture du périmètre → travail ciblé de
 faiblesses → synthèse rapide la veille) et le menu du jour le reflète ; après
 l'échéance, retour à la routine. Plus tard : importer la copie corrigée pour
 recaler la mémoire.
+
+**Implémentation repoussée après le jalon (acté).** On restructure d'abord ;
+l'architecture prévoit l'échéance dès le départ (sélecteur à deux régimes,
+`StudySession.source`) pour qu'elle s'ajoute ensuite par-dessus, sans reprise.
 
 ## 5. Vérification : par matière ET par sous-domaine
 
@@ -227,7 +243,7 @@ des leçons et du programme officiel.
   l'espace parent ; notifications plus tard).
 
 **Calibrage par âge.**
-- CE2 : séances 5-10 min, consignes minimales, audio utile (TTS), UI simple,
+- CE2 : séances 5-10 min, consignes minimales, UI simple,
   encouragements, gamification légère à trancher.
 - 6ème : séances 15-20 min, plusieurs matières ; plus tard la préparation de
   contrôles (plan multi-jours).
@@ -338,18 +354,6 @@ la température refusée par certains). Un seul endroit à durcir au lieu de
 sept, et chaque nouvelle activité en profite. À faire dans l'étape 1 (le
 contrat d'activité y touche déjà) ou juste avant une bascule de fournisseur.
 
-### TTS (à intégrer dès la conception)
-
-Périmètre : dictées (indispensable) et consignes lues pour le CE2 (confort).
-Intégration proposée : un endpoint backend authentifié — POST, ou mieux, un
-audio dérivé côté serveur d'un item existant (jamais le texte de la dictée en
-URL : il finirait dans les logs) — appelant un service TTS (fournisseur à
-choisir : OpenAI TTS, Google, ElevenLabs…),
-avec cache disque par hash du texte (une dictée re-jouée ne re-paye pas), et un
-composant audio simple côté front. Le français de qualité et le coût par
-caractère sont les critères de choix. Rien d'autre dans l'app n'a besoin de
-changer — c'est un service annexe, pas un pilier.
-
 ## 8. Chemin d'adaptation depuis l'app actuelle
 
 0. *(à tout moment)* **Bascule de modèles** — pure config par rôle (§7),
@@ -373,13 +377,14 @@ changer — c'est un service annexe, pas un pilier.
    UI d'entrée adaptée (clavier numérique). L'étape qui ouvre vraiment les
    maths CE2/6ème.
 5. **Le menu du jour.** Sélecteur sur les seules cibles **éligibles** (§4),
-   playlist persistée (`StudySession`), proposition à l'ouverture, un tap.
-   Conçu d'emblée à deux régimes : routine + objectifs datés (les échéances) —
-   la déclaration d'échéance arrive ici, le plan à rebours aussi. La vue
-   parent se branche sur les tentatives et séances réelles (activité,
-   progression, blocages, assiduité).
-6. **Le français au-delà de la grammaire.** Dictée (TTS) puis expression
-   écrite courte (retour critérié). Curation référentiel français.
+   playlist persistée (`StudySession`), proposition à l'ouverture, un tap,
+   reset de thread entre les blocs. L'interface à deux régimes (routine +
+   objectifs datés) est posée ici ; l'implémentation des échéances s'ajoute
+   après le jalon, par-dessus. La vue parent se branche sur les tentatives et
+   séances réelles (activité, progression, blocages, assiduité).
+6. **Le français au-delà de la grammaire.** Dictée puis expression écrite
+   courte (retour critérié) ; curation référentiel français. L'audio
+   nécessaire à la dictée se conçoit à ce moment-là — pas avant.
 7. **Le collège en propre.** Séances multi-matières plus longues, import de la
    copie corrigée après une échéance.
 
@@ -405,11 +410,10 @@ production dès qu'elle est verte. Trois conséquences sur le chemin :
   sont timeboxés. La curation reste le pôle de risque temps (du contenu à
   relire, pas du code) : approfondie post-jalon sur données réelles.
 - **L'étape 5 fait partie du jalon.** Le menu du jour est ce qui crée l'usage
-  autonome quotidien — précisément ce qu'on veut observer. Version jalon
-  simple : régime routine sur cibles éligibles + playlist persistée. La
-  conception à deux régimes est actée ; l'implémentation de la déclaration
-  d'échéance (poésie CE2 = cas minimal) est le premier candidat à décaler
-  juste après le jalon si le calendrier glisse.
+  autonome quotidien — précisément ce qu'on veut observer. Version jalon :
+  régime routine sur cibles éligibles + playlist persistée + reset de thread
+  entre les blocs. Les échéances : conçues dans l'architecture, implémentées
+  juste après le jalon (décision §9.6).
 
 **Jalon = 0 + 1 (domaine + registre + quiz) + 2-vertical + 4a + 5-simple.**
 Post-jalon, piloté par les
@@ -428,36 +432,38 @@ maintenant — les premières observations n'attendent pas le jalon.
    formats fermés pour la géométrie (pas de construction libre pour l'instant).
 3. **Menu du jour** : proposé, un tap pour accepter ; pas de composition à la
    volée pour l'instant.
-4. **TTS** : intégré à la conception (dictées + consignes CE2), service à
-   choisir, cache par texte.
-5. **Parent** : lecture seule + analyses par concept/domaine + import de
+4. **Parent** : lecture seule + analyses par concept/domaine + import de
    documents ; pas d'édition de mémoire ; communication simple d'abord.
-6. **Rattachement leçon → référentiel** : à chaque ingestion, les concepts
+5. **Rattachement leçon → référentiel** : à chaque ingestion, les concepts
    extraits sont rattachés aux concepts officiels de la base ; une même
    compétence est dupliquée entre classes (un nœud par niveau, avec la
    profondeur du niveau), les nœuds d'une lignée étant reliés entre eux.
-7. **Les échéances dès le départ** : le sélecteur de séance est conçu à deux
-   régimes (routine + objectifs datés), car les dates existent dès la primaire
-   (évaluations annoncées, poésies) — pas seulement au collège.
-8. **Cas du doute à la vérification** : un exercice douteux n'est pas posé ;
+6. **Les échéances : conçues dès le départ, implémentées après le jalon.**
+   L'architecture prévoit les deux régimes (routine + objectifs datés) dès sa
+   conception — les dates existent dès la primaire — mais la fonctionnalité
+   s'ajoute par-dessus, une fois la restructuration livrée.
+7. **Cas du doute à la vérification** : un exercice douteux n'est pas posé ;
    un doute apparu à la correction ne compte pas dans la maîtrise et est
    marqué dans la trace pour inspection.
-9. **Mobile natif iOS en phase 2** (repo séparé) : le backend reste la seule
+8. **Mobile natif iOS en phase 2** (repo séparé) : le backend reste la seule
    source de vérité et doit être consommable par un client non-TypeScript —
    auth duale, contrats générés depuis les schémas zod, SSE standard (§10).
-10. **Revue croisée intégrée** : cible pédagogique canonique
-    (`LearningTarget`) porteuse de la maîtrise ; preuves d'apprentissage
-    append-only (`ActivityAttempt`) repliées en maîtrise par une politique
-    déterministe ; séance persistée (`StudySession`) distincte du thread de
-    chat ; éligibilité par exposition (inconnu ≠ lacune) ; résolution
-    idempotente et transactionnelle ; registre conçu contre deux activités.
+9. **Revue croisée intégrée** : cible pédagogique canonique
+   (`LearningTarget`) porteuse de la maîtrise ; preuves d'apprentissage
+   append-only (`ActivityAttempt`) repliées en maîtrise par une politique
+   déterministe ; séance persistée (`StudySession`) distincte du thread de
+   chat ; éligibilité par exposition (inconnu ≠ lacune) ; résolution
+   idempotente et transactionnelle ; registre conçu contre deux activités.
+10. **Reset produit entre les blocs de révision** : un thread neuf par bloc,
+    contexte LLM borné, continuité par la mémoire durable (§4).
+11. **TTS retiré de la vision** : itération ultérieure, à concevoir avec la
+    dictée (étape 6) — rien à préparer d'ici là.
 
 ## 10. Multi-clients : web aujourd'hui, mobile natif demain
 
 Le backend est traité comme une API pour N clients. État des lieux : le chat
 est déjà un protocole client-agnostique (POST + flux de parts JSON typées,
-contrats dans `@tuteur/shared`), l'ingestion photo et le futur TTS sont du
-HTTP standard. Les conversations sont des threads éphémères par discussion
+contrats dans `@tuteur/shared`), l'ingestion photo est du HTTP standard. Les conversations sont des threads éphémères par discussion
 (`student-{id}-{conversationId}`, id généré par le client, format contraint
 par `ConversationIdSchema`) ; la mémoire durable, elle, est par élève — un
 enfant qui alterne web et mobile a des discussions distinctes mais une seule
@@ -497,10 +503,9 @@ via navigateur) sert d'app mobile de transition.
 
 Tranchés sur pièce au moment concerné, pas bloquants pour la vision :
 
-1. **Volumes du référentiel** — la *structure* (reporting / évaluable / items)
-   est tranchée (§3) ; le nombre de nœuds et la finesse des feuilles se
-   calibrent pendant la curation maths, sur pièce.
+1. **Volumes du référentiel** ⚠️ — la *structure* (reporting / évaluable /
+   items) est tranchée (§3) ; le nombre de nœuds et la finesse des feuilles
+   sont des hypothèses à vérifier et ajuster explicitement pendant
+   l'implémentation (voir l'avertissement du §3).
 2. **Gamification** — série de jours, étoiles par concept : forme exacte et
    visibilité parent à décider quand le menu du jour existe (elle s'y adosse).
-3. **Fournisseur TTS** — qualité du français vs coût ; à évaluer au moment de
-   la dictée.
