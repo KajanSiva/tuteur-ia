@@ -427,13 +427,13 @@ remplace « déployable à chaque commit ».
       ensemble : les types Prisma générés se propagent immédiatement dans
       l'applier, l'hydratation et les graphes — les séparer donnerait un
       commit rouge sans rien apprendre.
-   2. **`ActivityAttempt` + résolution idempotente et transactionnelle**
+   2. **`StudySession` + ses items + reset de thread**, autour du socratique
+      actuel ; `SessionTrace` disparaît.
+   3. **`ActivityAttempt` + résolution idempotente et transactionnelle**
       (tentative + maîtrise dérivée + progression, une transaction, une clé
       d'idempotence) + la politique qui replie les preuves en maîtrise.
-   3. **`StudySession` + ses items + reset de thread**, autour du socratique
-      actuel ; `SessionTrace` disparaît.
    4. **Le socratique porté** sur la nouvelle structure (il produit une
-      tentative, plus un niveau).
+      tentative, et non plus directement un niveau de maîtrise).
    5. **Le quiz fermé + extraction du registre** au contact réel des deux
       activités — jamais avant : un registre extrait d'un seul cas épouse ce
       cas.
@@ -493,7 +493,7 @@ part en production dès qu'elle est verte. Trois conséquences sur le chemin :
   entre les blocs. Les échéances : conçues dans l'architecture, implémentées
   juste après le jalon (décision §9.6).
 
-**Jalon = 1 (fondation, 6 tranches) + 2-vertical + 4a + 5-simple.** L'étape 0
+**Jalon = 1 (fondation, 5 tranches) + 2-vertical + 4a + 5-simple.** L'étape 0
 en est explicitement exclue. Post-jalon, piloté par les apprentissages :
 échéances, 4b, 6 (dictée, écriture), 7 (collège), approfondissement du
 référentiel, gamification.
