@@ -25,17 +25,21 @@ matières entières.
 
 ## 2. Premier pilier : découpler le savoir de l'activité
 
-Ce qui est déjà juste dans l'app et ne doit pas bouger : la mémoire est un
-ensemble de **concepts** par élève, avec un niveau de maîtrise, un historique
-append-only et une politique d'écriture prudente. Ce modèle est agnostique à la
-matière.
+Ce qui est déjà juste dans l'app et ne doit pas bouger : la **philosophie** de
+la mémoire — un état de maîtrise par élève, des historiques append-only, une
+politique d'écriture prudente où le déterministe décide et le LLM ne fait que
+proposer. Cette philosophie est agnostique à la matière. Sa *mécanique*, en
+revanche, évolue (cible canonique, preuves, politique — §7) : c'est un concept
+de leçon qui porte la maîtrise aujourd'hui, ce sera une cible pédagogique
+demain.
 
 Ce qui doit devenir pluriel : **l'activité** par laquelle on travaille et on
-évalue un concept.
+évalue une cible.
 
-> Un concept a un *type de savoir* ; une séance choisit, pour chaque concept,
-> une *activité* adaptée à ce type ; toutes les activités parlent à la mémoire
-> par le même contrat (un signal de maîtrise standardisé).
+> Une cible a un *type de savoir* ; une séance choisit, pour chacune, une
+> *activité* adaptée ; toutes les activités parlent à la mémoire par le même
+> contrat — non pas un niveau de maîtrise, mais une **preuve** de ce qui s'est
+> passé, qu'une politique déterministe replie ensuite en maîtrise.
 
 ### Types de savoir
 
@@ -148,18 +152,24 @@ Orchestration déterministe, comme aujourd'hui :
    leçon choisie, « jamais évalué » = à travailler : on sait que la leçon a
    été enseignée. Sur le référentiel entier, « jamais évalué » veut le plus
    souvent dire « pas encore abordé en classe » — une exposition à venir, pas
-   une lacune. Une cible est éligible si elle a été introduite (leçon
-   rattachée), demandée explicitement (« on travaille les tables »), incluse
-   dans une échéance, ou si ses prérequis sont acquis (automatismes). Le
-   gaps-first + SRS s'applique à l'intérieur de ce périmètre, jamais au
-   programme entier — sinon le menu propose des notions de dans six mois et
-   la carte parent transforme « pas encore enseigné » en « retard ».
+   une lacune. Une cible entre dans le **menu quotidien** seulement si elle a
+   été introduite (leçon rattachée) ou incluse dans une échéance. Prérequis
+   acquis n'est pas la même chose qu'enseigné : ça rend une cible *disponible
+   sur demande* (« on travaille les tables ») sans la faire remonter d'elle-
+   même dans le menu. Le gaps-first + SRS s'applique à l'intérieur de ce
+   périmètre, jamais au programme entier — sinon le menu propose des notions
+   de dans six mois et la carte parent transforme « pas encore enseigné » en
+   « retard ».
 2. **Choix d'activité par cible** — déterministe : type de savoir + historique
    (varier les modalités) + profil de l'élève.
-3. **Exécution** — chaque activité est un module isolé qui rend le même signal
-   de maîtrise ; boucle concept par concept inchangée.
-4. **Distillation** — inchangée : applier déterministe, silence ≠
-   contradiction, historique, trace de séance enrichie du type d'activité.
+3. **Exécution** — chaque activité est un module isolé ; la boucle avance
+   cible par cible et chaque module rend une **tentative** (`ActivityAttempt`),
+   pas un niveau.
+4. **Distillation** — même philosophie, mécanique enrichie : une politique
+   déterministe replie les tentatives en proposition de maîtrise, que l'applier
+   écrit (silence ≠ contradiction, historique append-only). La résolution
+   d'une cible — tentative, maîtrise dérivée, progression de séance — est une
+   seule transaction idempotente.
 
 **Le menu du jour (acté)** : à l'ouverture, le tuteur propose la séance
 (« aujourd'hui : 2 exercices de maths, 3 questions d'histoire — ~10 min »),
@@ -267,10 +277,14 @@ ActivityModule = {
 contrat n'est pas un niveau de maîtrise mais un **événement de tentative**
 (`ActivityAttempt`, append-only) : cible, activité, item posé (énoncé,
 variante, version de template), exactitude, essais, indices utilisés,
-vérificateur employé, doute éventuel. Une **politique déterministe par type de
-savoir** replie une série de tentatives en proposition de maîtrise — répondre
-juste à 7×8 une fois ne valide pas « les tables » ; trois erreurs avec indices
-ne valent pas une réussite du premier coup. Le socratique garde son signal
+vérificateur employé, doute éventuel. Une **politique déterministe** replie une
+série de tentatives en proposition de maîtrise, en pesant trois choses : le
+type de savoir (un automatisme demande de la répétition, une notion non), et
+surtout **l'activité et la qualité de la preuve** — une réussite vérifiée
+déterministiquement, un quiz réussi après un indice et une appréciation
+socratique d'un juge LLM ne valent pas le même poids. Répondre juste à 7×8 une
+fois ne valide pas « les tables » ; trois erreurs avec indices ne valent pas
+une réussite du premier coup. Le socratique garde son signal
 actuel `{ status, level, rationale }` comme *contenu* de sa tentative :
 l'évaluateur LLM propose, la politique décide, l'applier écrit.
 
@@ -305,25 +319,32 @@ dupliquerait la maîtrise entre deux leçons couvrant le même attendu :
 
 ```
 CurriculumNode ──┐
-                 ├─→ LearningTarget ←── Mastery (par élève)
-LessonConcept ───┘         ↑
+                 ├─→ LearningTarget ←── Mastery (+ historique)
+LessonConcept ───┘         ↑     ↑
+                           │     └── StudentTargetState (exposition, par élève)
                     ActivityAttempt (append-only)
+                           ↑
+                    StudySession → items planifiés
 ```
 
-- Un concept de leçon rattaché au référentiel partage la cible du nœud : deux
+- `Concept` est renommé **`LessonConcept`** — ce qu'il est réellement : un
+  concept extrait d'une leçon, avec sa provenance. Il ne porte plus la
+  maîtrise.
+- Un `LessonConcept` rattaché au référentiel partage la cible du nœud : deux
   leçons sur le même attendu nourrissent UNE maîtrise. Un concept non
   rattaché porte sa propre cible (rattachable plus tard — la fusion de
   maîtrises passe par l'applier, avec historique). Les exercices ancrés
   référentiel visent la cible du nœud directement, sans leçon.
-- **Exposition ≠ maîtrise** : la cible porte, par élève, un état d'exposition
-  (jamais abordé / introduit — par une leçon rattachée, une demande explicite
-  ou une échéance / en entraînement), distinct du niveau de maîtrise. C'est ce
-  qui rend le sélecteur et la carte parent honnêtes (§4).
-- `ActivityAttempt` (append-only) et `StudySession` (§4) ; `session_trace`
-  est absorbée/étendue par ces deux entités.
+- **Exposition ≠ maîtrise** : `StudentTargetState` porte, par (élève, cible),
+  l'état d'exposition (jamais abordé / introduit — par une leçon rattachée,
+  une demande explicite ou une échéance / en entraînement), distinct du niveau
+  de maîtrise. C'est ce qui rend le sélecteur et la carte parent honnêtes (§4).
+- `ActivityAttempt` (append-only) et `StudySession` + ses items (§4)
+  **remplacent** `SessionTrace` comme support métier de la séance.
 - `subject` et `gradeLevel` deviennent des **codes stables** (plus de chaînes
   libres) — le référentiel l'exige.
-- `Concept.knowledgeKind` renseigné à l'ingestion.
+- `knowledgeKind` porté par la cible, renseigné à l'ingestion ou par le
+  référentiel.
 
 ### Modèles par rôle et appels structurés
 
@@ -356,16 +377,67 @@ contrat d'activité y touche déjà) ou juste avant une bascule de fournisseur.
 
 ## 8. Chemin d'adaptation depuis l'app actuelle
 
-0. *(à tout moment)* **Bascule de modèles** — pure config par rôle (§7),
-   accompagnée de l'extraction du helper d'appel structuré et, pour le
-   socratique, validée par le harnais d'eval.
-1. **Le domaine + le contrat d'activité + le quiz (une seule fondation).**
-   D'abord l'évolution du modèle : cible canonique, tentatives append-only,
-   exposition, séance persistée, codes stables, résolution idempotente et
-   transactionnelle. Puis le registre d'activités, conçu contre DEUX modules
-   dès le départ — le socratique refactoré ET le quiz fermé (concevoir le
-   registre sur le seul socratique le ferait épouser le socratique). Le pivot
-   de tout le plan.
+### Le contexte qui autorise une refonte franche
+
+L'app est déployée mais **pas encore réellement utilisée** : les données en
+base sont des essais. Il n'y a donc ni compatibilité à préserver, ni migration
+de données à écrire — et c'est exactement le moment où poser la structure
+cible coûte le moins cher. Conséquences assumées :
+
+- **Breaking changes libres.** Pas de dual-write, pas de couche de
+  compatibilité temporaire, pas de backfill : le schéma cible est écrit
+  directement.
+- **Historique de migrations remis à plat.** Plutôt que d'empiler des
+  migrations de transition autour du POC, on repart d'une migration initiale
+  propre et on recrée la base.
+- **À vérifier avant destruction** (seul garde-fou) : qu'aucune leçon, image
+  de leçon (volume `/data/uploads`) ni configuration ne mérite d'être
+  conservée. Les threads du checkpointer, eux, sont éphémères par conception.
+  Corollaire pratique : si les enfants utilisent l'app d'ici là, leurs leçons
+  photographiées partiront aussi — à re-photographier après la bascule, ou à
+  décider de conserver (et alors il faudra un script d'import, pas une
+  migration).
+
+**La règle de livraison incrémentale change de raison, pas de valeur.** Les
+petites tranches ne servent plus à préserver la production (elle est
+jetable) mais à **rendre les erreurs visibles tôt** : chaque commit garde
+`typecheck` et la suite de tests **verts**, avec des tests précis sur le
+comportement introduit. En revanche une tranche intermédiaire n'a plus besoin
+d'être déployable ni fonctionnellement complète : « vert à chaque commit »
+remplace « déployable à chaque commit ».
+
+### Les étapes
+
+0. *(optionnelle, non bloquante)* **Bascule de modèles** — pure config par
+   rôle (§7) + extraction du helper d'appel structuré. Ne fait PAS partie du
+   jalon : si les modèles actuels conviennent, elle ne doit rien retarder ;
+   à faire quand le coût le justifie.
+1. **La fondation** — le pivot de tout le plan, en cinq tranches vertes :
+   1. **Schéma cible + repositories et politique mémoire portés dessus.**
+      `LessonConcept` (l'ancien `Concept`, renommé pour ce qu'il est),
+      `LearningTarget` canonique portant la maîtrise, `StudentTargetState`
+      (exposition), `CurriculumNode` avec codes et version,
+      `subject`/`gradeLevel` en codes stables. Schéma et repositories vont
+      ensemble : les types Prisma générés se propagent immédiatement dans
+      l'applier, l'hydratation et les graphes — les séparer donnerait un
+      commit rouge sans rien apprendre.
+   2. **`ActivityAttempt` + résolution idempotente et transactionnelle**
+      (tentative + maîtrise dérivée + progression, une transaction, une clé
+      d'idempotence) + la politique qui replie les preuves en maîtrise.
+   3. **`StudySession` + ses items + reset de thread**, autour du socratique
+      actuel ; `SessionTrace` disparaît.
+   4. **Le socratique porté** sur la nouvelle structure (il produit une
+      tentative, plus un niveau).
+   5. **Le quiz fermé + extraction du registre** au contact réel des deux
+      activités — jamais avant : un registre extrait d'un seul cas épouse ce
+      cas.
+
+   **Contrainte non négociable de la refonte** : le schéma peut casser, pas
+   les *comportements* couverts par les tests. Les cas denses de l'applier
+   (silence ≠ contradiction, merge par champ, `is_locked`, provenance de
+   l'historique, atomicité, échelle SRS) sont le capital du projet — ils sont
+   re-pointés sur les cibles, jamais supprimés. Le harnais d'eval du
+   socratique suit la même règle.
 2. **Le référentiel.** Structure trois couches (§3) + curation verticale :
    maths CE2 d'abord (quelques compétences suffisent à ancrer l'étape 4a),
    6ème dans la foulée ; rattachement des concepts à l'ingestion avec
@@ -396,8 +468,8 @@ peut arriver tôt car indépendant).
 
 L'objectif court terme n'est pas la vision complète : c'est un état testable
 par les enfants en autonomie, pour en tirer des apprentissages réels avant
-d'aller plus loin. Le déploiement continu étant en place, chaque étape part en
-production dès qu'elle est verte. Trois conséquences sur le chemin :
+d'aller plus loin. Le déploiement continu étant en place, une étape complète
+part en production dès qu'elle est verte. Trois conséquences sur le chemin :
 
 - **L'étape 4 se scinde.** 4a — templates déterministes + UI de saisie
   numérique : rapide, fiabilité totale, l'essentiel de la valeur CE2. 4b —
@@ -415,12 +487,15 @@ production dès qu'elle est verte. Trois conséquences sur le chemin :
   entre les blocs. Les échéances : conçues dans l'architecture, implémentées
   juste après le jalon (décision §9.6).
 
-**Jalon = 0 + 1 (domaine + registre + quiz) + 2-vertical + 4a + 5-simple.**
-Post-jalon, piloté par les
-apprentissages : 4b, 6 (dictée, écriture), 7 (collège), approfondissement du
-référentiel, gamification. L'app actuelle déjà déployée (socratique sur les
-matières déclaratives + ingestion photo) est utilisable par les enfants dès
-maintenant — les premières observations n'attendent pas le jalon.
+**Jalon = 1 (fondation, 6 tranches) + 2-vertical + 4a + 5-simple.** L'étape 0
+en est explicitement exclue. Post-jalon, piloté par les apprentissages :
+échéances, 4b, 6 (dictée, écriture), 7 (collège), approfondissement du
+référentiel, gamification.
+
+Le jalon est ambitieux comme *cap*, et c'est assumé : le risque n'est pas sa
+taille mais qu'il devienne un chantier indivisible. Il ne l'est pas — 1.1 à
+1.5 puis 2, 4a, 5 sont autant de tranches vertes et revues une à une. La
+seule règle qui compte : jamais deux tranches en vol en même temps.
 
 ## 9. Décisions actées
 
@@ -458,6 +533,14 @@ maintenant — les premières observations n'attendent pas le jalon.
     contexte LLM borné, continuité par la mémoire durable (§4).
 11. **TTS retiré de la vision** : itération ultérieure, à concevoir avec la
     dictée (étape 6) — rien à préparer d'ici là.
+12. **Refonte franche assumée** : l'app n'étant pas encore réellement
+    utilisée, on écrit le schéma cible directement — breaking changes libres,
+    aucune couche de compatibilité, historique de migrations remis à plat,
+    base recréée (§8). La livraison en petites tranches reste la règle, mais
+    pour rendre les erreurs visibles tôt : **vert à chaque commit**, plus
+    « déployable à chaque commit ».
+13. **Bascule de modèles hors jalon** : optionnelle et non bloquante — elle ne
+    doit jamais retarder un test enfant si les modèles actuels conviennent.
 
 ## 10. Multi-clients : web aujourd'hui, mobile natif demain
 
