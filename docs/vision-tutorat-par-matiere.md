@@ -348,18 +348,39 @@ LessonConcept ───┘         ↑     ↑
 
 ### Modèles par rôle et appels structurés
 
-**Changer de modèle est déjà de la pure config** (factory par rôle,
-`llm/models.ts` : `LLM_PROVIDER_<ROLE>` / `LLM_MODEL_<ROLE>`) — seule la
-dépendance `@langchain/<provider>` est à installer. Faisable à tout moment,
-indépendamment du reste (« étape 0 »). Méthode pour basculer vers un modèle
-moins cher (ex. `gpt-5.6-luna`) :
+La première adaptation est une **baseline OpenAI coût minimal**, avant la
+refonte du domaine. Ce n'est pas le choix qualité définitif : une campagne
+d'eval post-jalon comparera les modèles par rôle. Les modèles et prix
+ci-dessous ont été vérifiés le 22 août 2026 dans la documentation officielle
+OpenAI ([catalogue](https://developers.openai.com/api/docs/models),
+[comparateur](https://developers.openai.com/api/docs/models/compare)) ; les
+prix sont par million de tokens, hors éventuels suppléments de traitement.
 
-- **rôles contraints d'abord** (classifier, evaluate, session_analysis) —
-  sortie structurée validée par zod, risque faible ;
-- **le socratique en dernier** — c'est l'âme du produit : valider avant/après
-  avec le harnais d'eval (`pnpm eval`) ;
-- **le juge reste sur un modèle fort et différent** de celui qu'il évalue ;
-- `ingest_parse` exige un modèle à entrée image.
+| Rôle | Baseline étape 0 | Réglage initial | Pourquoi |
+|---|---|---|---|
+| `classifier` | `gpt-5-nano` | paramètres minimaux supportés | le moins cher : $0.05 entrée / $0.40 sortie ; adapté à la classification et aux sorties structurées |
+| `evaluate` | `gpt-5-nano` | paramètres minimaux supportés | appel fréquent mais contraint ; le signal reste validé par zod et traité conservativement |
+| `session_analysis` | `gpt-5-nano` | paramètres minimaux supportés | extraction structurée peu fréquente et sans dialogue utilisateur |
+| `socratic` | `gpt-5.6-luna` | `reasoning.effort: none` au départ | modèle actuel pour charges sensibles au coût : $0.20 entrée / $1.20 sortie ; le rôle ouvert demande plus de tenue que les classifieurs |
+| `ingest_parse` | `gpt-5.6-luna` | `reasoning.effort: low` au départ | accepte les images et les sorties structurées ; l'ingestion est rare mais sa fidélité conditionne toute la suite |
+| `judge` | `gpt-5.6-terra` | `reasoning.effort: medium` | modèle plus fort et distinct, utilisé seulement par le harnais d'eval — pas dans le coût courant des séances |
+
+`gpt-5-nano` est le modèle GPT-5 historique le moins cher et supporte image,
+function calling et structured outputs
+([fiche officielle](https://developers.openai.com/api/docs/models/gpt-5-nano)).
+Pour les nouvelles charges sensibles au coût, OpenAI recommande toutefois
+`gpt-5.6-luna`, qui supporte également image, function calling et structured
+outputs
+([fiche officielle](https://developers.openai.com/api/docs/models/gpt-5.6-luna)).
+Cette asymétrie est volontaire : nano là où le contrat ferme fortement la
+tâche, Luna là où la qualité du langage ou de la vision compte. Si les premiers
+smoke tests montrent une incompatibilité ou une régression manifeste sur un
+rôle nano, le repli immédiat est Luna — sans attendre la campagne d'eval finale.
+
+La bascule se fait **rôle contraint par rôle contraint**, puis ingestion, puis
+socratique ; le harnais d'eval vérifie au minimum que le comportement
+socratique ne s'effondre pas. Le juge passe à Terra avant d'évaluer Luna afin
+de rester distinct. `ingest_parse` est testé avec de vraies images de leçon.
 
 **Une seule abstraction à ajouter, pas une couche.** LangChain
 (`initChatModel` → `BaseChatModel`) est déjà la couche d'abstraction
@@ -367,13 +388,14 @@ fournisseur — en rajouter une par-dessus serait de la sur-ingénierie. En
 revanche, le motif d'appel structuré (garde `bindTools`, tool forcé par
 `tool_choice`, `safeParse` de `tool_calls[0].args`, repli conservateur en cas
 de sortie malformée) est aujourd'hui dupliqué sur 7 sites dans 6 fichiers.
-À extraire en un helper unique (`llm/structured.ts`, style
+À extraire dans l'étape 0 en un helper unique (`llm/structured.ts`, style
 `invokeStructured(role, { tool, schema, messages, fallback })`) : c'est
 précisément là que les différences entre fournisseurs mordent (forme des
 tool-calls, réponses vides, contraintes des modèles de raisonnement — p. ex.
-la température refusée par certains). Un seul endroit à durcir au lieu de
-sept, et chaque nouvelle activité en profite. À faire dans l'étape 1 (le
-contrat d'activité y touche déjà) ou juste avant une bascule de fournisseur.
+la température refusée par certains). La config par rôle doit donc pouvoir
+**omettre** `temperature` et porter les paramètres de raisonnement supportés,
+au lieu d'envoyer les mêmes options à tous les modèles. Un seul endroit à
+durcir au lieu de sept, et chaque nouvelle activité en profite.
 
 ## 8. Chemin d'adaptation depuis l'app actuelle
 
@@ -414,10 +436,14 @@ remplace « déployable à chaque commit ».
 
 ### Les étapes
 
-0. *(optionnelle, non bloquante)* **Bascule de modèles** — pure config par
-   rôle (§7) + extraction du helper d'appel structuré. Ne fait PAS partie du
-   jalon : si les modèles actuels conviennent, elle ne doit rien retarder ;
-   à faire quand le coût le justifie.
+0. **Baseline OpenAI coût minimal — préalable immédiat à la fondation.**
+   Installer `@langchain/openai`, extraire le helper d'appel structuré, rendre
+   la config compatible avec les paramètres propres aux modèles de
+   raisonnement, puis basculer rôle par rôle selon la matrice du §7. Smoke
+   tests réels pour les tool calls et la vision, tests unitaires pour les
+   fallbacks, et passage du harnais d'eval pour le socratique. Cette étape fixe
+   une baseline économique provisoire ; la sélection qualité/prix définitive
+   reste une campagne distincte après les implémentations fonctionnelles.
 1. **La fondation** — le pivot de tout le plan, en cinq tranches vertes :
    1. **Schéma cible + repositories et politique mémoire portés dessus.**
       `LessonConcept` (l'ancien `Concept`, renommé pour ce qu'il est),
@@ -493,8 +519,9 @@ part en production dès qu'elle est verte. Trois conséquences sur le chemin :
   entre les blocs. Les échéances : conçues dans l'architecture, implémentées
   juste après le jalon (décision §9.6).
 
-**Jalon = 1 (fondation, 5 tranches) + 2-vertical + 4a + 5-simple.** L'étape 0
-en est explicitement exclue. Post-jalon, piloté par les apprentissages :
+**Jalon produit = 1 (fondation, 5 tranches) + 2-vertical + 4a + 5-simple.**
+L'étape 0 le précède comme migration technique, sans ajouter de fonctionnalité
+au jalon. Post-jalon, piloté par les apprentissages :
 échéances, 4b, 6 (dictée, écriture), 7 (collège), approfondissement du
 référentiel, gamification.
 
@@ -548,8 +575,11 @@ seule règle qui compte : jamais deux tranches en vol en même temps.
     livraison en petites tranches reste la règle, mais pour rendre les erreurs
     visibles tôt : **vert à chaque commit**, plus « déployable à chaque
     commit ».
-13. **Bascule de modèles hors jalon** : optionnelle et non bloquante — elle ne
-    doit jamais retarder un test enfant si les modèles actuels conviennent.
+13. **Baseline OpenAI avant la fondation** : bascule coût minimal par rôle
+    (`gpt-5-nano` pour les tâches fermées, `gpt-5.6-luna` pour le socratique et
+    la vision, `gpt-5.6-terra` pour le juge d'eval), validée par smoke tests et
+    le harnais existant. Ce choix est provisoire : la campagne d'eval finale
+    décidera du meilleur ratio qualité/prix.
 
 ## 10. Multi-clients : web aujourd'hui, mobile natif demain
 
