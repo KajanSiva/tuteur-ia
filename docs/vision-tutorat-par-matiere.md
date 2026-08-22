@@ -379,6 +379,15 @@ contrat d'activité y touche déjà) ou juste avant une bascule de fournisseur.
 
 ### Le contexte qui autorise une refonte franche
 
+> ⚠️ **Permission temporaire, propre à cette phase — ne pas généraliser.**
+> Ce qui suit vaut tant que l'app n'a pas de vraies données. **Elle expire au
+> premier usage réel par les enfants.** Cette autorisation vit ici, dans un
+> document de planification daté — délibérément PAS dans `CLAUDE.md`, le
+> README ni aucun fichier d'instructions permanent : une session future qui
+> lirait « on peut casser la base » comme une règle du projet détruirait des
+> données réelles. Après le jalon, le régime par défaut redevient :
+> migrations rétrocompatibles, aucune perte de données.
+
 L'app est déployée mais **pas encore réellement utilisée** : les données en
 base sont des essais. Il n'y a donc ni compatibilité à préserver, ni migration
 de données à écrire — et c'est exactement le moment où poser la structure
@@ -390,13 +399,10 @@ cible coûte le moins cher. Conséquences assumées :
 - **Historique de migrations remis à plat.** Plutôt que d'empiler des
   migrations de transition autour du POC, on repart d'une migration initiale
   propre et on recrée la base.
-- **À vérifier avant destruction** (seul garde-fou) : qu'aucune leçon, image
-  de leçon (volume `/data/uploads`) ni configuration ne mérite d'être
-  conservée. Les threads du checkpointer, eux, sont éphémères par conception.
-  Corollaire pratique : si les enfants utilisent l'app d'ici là, leurs leçons
-  photographiées partiront aussi — à re-photographier après la bascule, ou à
-  décider de conserver (et alors il faudra un script d'import, pas une
-  migration).
+- **Rien n'est conservé de l'existant (acté).** Aucune leçon, aucune image de
+  leçon (volume `/data/uploads`), aucun compte, aucun thread : la base et le
+  volume repartent vides. Pas de script d'export à écrire. Les comptes parent
+  et enfants se recréent par l'onboarding, les leçons se re-photographient.
 
 **La règle de livraison incrémentale change de raison, pas de valeur.** Les
 petites tranches ne servent plus à préserver la production (elle est
@@ -533,12 +539,15 @@ seule règle qui compte : jamais deux tranches en vol en même temps.
     contexte LLM borné, continuité par la mémoire durable (§4).
 11. **TTS retiré de la vision** : itération ultérieure, à concevoir avec la
     dictée (étape 6) — rien à préparer d'ici là.
-12. **Refonte franche assumée** : l'app n'étant pas encore réellement
-    utilisée, on écrit le schéma cible directement — breaking changes libres,
-    aucune couche de compatibilité, historique de migrations remis à plat,
-    base recréée (§8). La livraison en petites tranches reste la règle, mais
-    pour rendre les erreurs visibles tôt : **vert à chaque commit**, plus
-    « déployable à chaque commit ».
+12. **Refonte franche assumée** *(permission temporaire — §8)* : l'app n'étant
+    pas encore réellement utilisée, on écrit le schéma cible directement —
+    breaking changes libres, aucune couche de compatibilité, historique de
+    migrations remis à plat, base et volume d'images recréés vides, rien de
+    l'existant conservé. **Cette permission expire au premier usage réel** et
+    ne figure volontairement dans aucun fichier d'instructions permanent. La
+    livraison en petites tranches reste la règle, mais pour rendre les erreurs
+    visibles tôt : **vert à chaque commit**, plus « déployable à chaque
+    commit ».
 13. **Bascule de modèles hors jalon** : optionnelle et non bloquante — elle ne
     doit jamais retarder un test enfant si les modèles actuels conviennent.
 
