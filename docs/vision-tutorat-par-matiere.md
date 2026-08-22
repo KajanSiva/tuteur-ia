@@ -69,14 +69,29 @@ par niveau de classe et par matière**, dérivée des programmes officiels
 
 ```
 CurriculumNode
-  gradeLevel   "CE2" | "6ème" | …
-  subject      "Mathématiques" | "Français" | …
-  domain       le domaine officiel (maths : nombres et calculs /
-               grandeurs et mesures / espace et géométrie ; …)
-  parentId     arborescence (domaine → attendu → sous-compétence)
-  label        « poser et effectuer une division euclidienne », …
-  knowledgeKind fait / notion / méthode / automatisme / production
+  code           identifiant stable (survit aux mises à jour du référentiel)
+  gradeLevel     code de classe (CE2, SIXIEME, …)
+  subject        code matière (MATHS, FRANCAIS, …)
+  domain         le domaine officiel (maths : nombres et calculs /
+                 grandeurs et mesures / espace et géométrie ; …)
+  parentId       arborescence (domaine → attendu → compétence évaluable)
+  role           reporting | évaluable
+  label          « poser et effectuer une division euclidienne », …
+  knowledgeKind  fait / notion / méthode / automatisme / production
+  prerequisites  arêtes de prérequis, y compris vers le niveau précédent —
+                 un graphe, pas une simple lignée
 ```
+
+**Trois couches, tranchées dès maintenant** (seuls les volumes se calibrent
+pendant la curation) : les nœuds de **reporting** (domaines, attendus — la
+carte parent), les **compétences évaluables** (les feuilles, assez fines pour
+qu'une série de tentatives fasse foi — l'unité de maîtrise), et les **items**
+(les exercices/questions générés pour une compétence — jamais des nœuds). Un
+nœud trop large n'est pas évaluable ; un item n'est pas une compétence.
+
+Le référentiel lui-même porte **source officielle, année d'effet et version** :
+« versionné dans git » ne suffit pas à interpréter les données anciennes après
+une mise à jour — les codes stables et la version le permettent.
 
 Le référentiel a un **double rôle** :
 
@@ -103,9 +118,12 @@ reprojette sur les nœuds du nouveau niveau).
 (histoire, sciences…) : c'est ce qui garantit que les questions portent
 exactement sur ce que l'enfant a vu en classe. Chaque concept extrait d'une
 leçon est **rattaché au nœud de référentiel correspondant** quand le lien est
-confiant (LLM avec seuil ; un concept non rattaché reste valide et rattachable
-plus tard). La maîtrise d'un nœud du référentiel s'agrège alors depuis les
-concepts de leçons rattachés + les exercices ancrés directement.
+confiant (un concept non rattaché reste valide et rattachable plus tard). Le
+rattachement garde sa **provenance** — modèle, score, statut (proposé /
+confirmé) — comme tout le reste de la mémoire : la « confiance » d'un LLM
+n'étant pas calibrée, un rattachement contestable doit pouvoir être audité et
+défait. La maîtrise d'un nœud s'agrège depuis la cible canonique qu'il
+partage avec les concepts rattachés (§7).
 
 **Fabrication du contenu** : fichiers versionnés dans le repo (un par
 niveau × matière), curatés une fois avec assistance LLM puis relus — pas de
@@ -120,9 +138,16 @@ référentiel prioritaire en maths/français** — les deux coexistent partout.
 
 Orchestration déterministe, comme aujourd'hui :
 
-1. **Sélection des cibles** — gaps-first + répétition espacée, inter-leçons et
-   inter-matières à terme ; les cibles sont des concepts de leçon *ou* des
-   nœuds du référentiel (maths).
+1. **Sélection des cibles — parmi les cibles ÉLIGIBLES seulement.** Dans une
+   leçon choisie, « jamais évalué » = à travailler : on sait que la leçon a
+   été enseignée. Sur le référentiel entier, « jamais évalué » veut le plus
+   souvent dire « pas encore abordé en classe » — une exposition à venir, pas
+   une lacune. Une cible est éligible si elle a été introduite (leçon
+   rattachée), demandée explicitement (« on travaille les tables »), incluse
+   dans une échéance, ou si ses prérequis sont acquis (automatismes). Le
+   gaps-first + SRS s'applique à l'intérieur de ce périmètre, jamais au
+   programme entier — sinon le menu propose des notions de dans six mois et
+   la carte parent transforme « pas encore enseigné » en « retard ».
 2. **Choix d'activité par cible** — déterministe : type de savoir + historique
    (varier les modalités) + profil de l'élève.
 3. **Exécution** — chaque activité est un module isolé qui rend le même signal
@@ -135,10 +160,15 @@ Orchestration déterministe, comme aujourd'hui :
 l'enfant accepte d'un tap. Pas de composition à la volée pour l'instant ;
 demander une leçon précise reste possible comme aujourd'hui.
 
-Le modèle « un thread par conversation » (en place depuis le fix
-thread-per-conversation) s'aligne naturellement : **une séance = une
-conversation** — thread frais, état de routage propre, transcript borné ; la
-continuité entre séances vit dans la mémoire durable, pas dans le thread.
+**La séance est une entité métier persistée** (`StudySession` : playlist de
+cibles planifiées, curseur, source — routine / échéance / demande explicite —,
+horodatages début/fin/abandon), pas un simple thread de chat. Le thread
+LangGraph reste son véhicule conversationnel (thread frais par séance, état de
+routage propre) mais ne définit pas son identité : le frontend crée
+aujourd'hui une conversation par chargement de page, qui peut mélanger une
+ingestion et plusieurs révisions — ce n'est pas une frontière métier. C'est la
+séance persistée qui porte la reprise après interruption, l'assiduité et le
+taux de complétion que la vue parent affiche.
 
 **Les échéances (acté).** Le sélecteur poursuit deux régimes, dès sa
 conception : la **routine** (répétition espacée globale) et les **objectifs
@@ -177,7 +207,10 @@ et est marqué dans la trace pour inspection.
 
 **L'enfant fait tout seul.** Menu du jour en un tap, demande libre d'une leçon,
 ingestion photo à sa main. Le système est sûr par construction : il ne donne
-jamais la réponse, le contenu vient des leçons et du programme officiel.
+jamais la réponse *tant que l'élève cherche* — mais une fois la cible résolue
+(réussie ou forcée après plusieurs essais), montrer la correction expliquée
+fait partie de l'apprentissage, pour les exercices surtout. Le contenu vient
+des leçons et du programme officiel.
 
 **Le parent (acté : lecture seule + analyse + import).**
 - Lecture seule sur la progression : carte d'avancement par rapport au
@@ -187,6 +220,9 @@ jamais la réponse, le contenu vient des leçons et du programme officiel.
   les leçons (photos/PDF) pour un enfant — même pipeline d'ingestion que côté
   enfant. Utile quand c'est le parent qui a le cartable sous la main.
 - Pas d'édition de la mémoire ni de pilotage des séances pour l'instant.
+  Déclarer une échéance n'est pas du pilotage : c'est une information
+  factuelle sur l'école (une date, un périmètre), au même titre qu'une photo
+  de leçon.
 - Communication : un mécanisme simple d'abord (un résumé périodique dans
   l'espace parent ; notifications plus tard).
 
@@ -207,33 +243,71 @@ ActivityModule = {
   type: "socratic" | "quiz" | "exercise" | "dictation" | …
   accepts(target, student): boolean      // type de savoir, sous-domaine, âge
   nodes / edges (LangGraph)              // dialogue en un ou plusieurs tours
-  → MasterySignal { status, level, rationale }   // format actuel, obligatoire
+  → ActivityAttempt                      // une preuve d'apprentissage, append-only
 }
 ```
 
-- **La mémoire ne change pas** (applier, tables `mastery*`, politique
-  d'écriture). Une activité ratée produit au pire un signal pauvre — elle ne
-  peut pas corrompre la mémoire.
+**Les activités produisent des preuves, pas des niveaux.** La sortie du
+contrat n'est pas un niveau de maîtrise mais un **événement de tentative**
+(`ActivityAttempt`, append-only) : cible, activité, item posé (énoncé,
+variante, version de template), exactitude, essais, indices utilisés,
+vérificateur employé, doute éventuel. Une **politique déterministe par type de
+savoir** replie une série de tentatives en proposition de maîtrise — répondre
+juste à 7×8 une fois ne valide pas « les tables » ; trois erreurs avec indices
+ne valent pas une réussite du premier coup. Le socratique garde son signal
+actuel `{ status, level, rationale }` comme *contenu* de sa tentative :
+l'évaluateur LLM propose, la politique décide, l'applier écrit.
+
+- **La philosophie mémoire ne change pas ; le schéma, si.** Applier,
+  historiques append-only, silence ≠ contradiction : intacts. Mais le schéma
+  évolue (cible canonique, tentatives, séances — delta ci-dessous). Et la
+  couche « politique » est ce qui empêche réellement une activité défectueuse
+  de polluer la maîtrise : zod garantit la *forme* d'un signal, jamais sa
+  justesse — aujourd'hui le niveau proposé par l'évaluateur est appliqué
+  directement ; demain il transite par la politique.
 - **La boucle de séance devient générique** : queue/cursor/turns actuels,
   paramétrés par l'activité courante.
-- **Les activités respectent la sémantique de reprise du chat** : timeout de
-  tour, abandon quand le client raccroche, `retry_turn` qui rejoue la tâche en
-  attente du checkpoint. Même règle qu'aujourd'hui : aucun effet de bord
-  irréversible avant la résolution du concept (les écritures mémoire restent
-  au moment de l'avance) — un module d'activité rejouable est un module sûr.
+- **Reprise sûre = idempotence + transaction.** La sémantique de reprise
+  (timeout de tour, abandon client, `retry_turn` qui rejoue la tâche pendante)
+  exige plus que « pas d'effet de bord avant résolution » : aujourd'hui la
+  maîtrise puis la trace s'écrivent en deux opérations séparées, et un NOOP
+  rejoué avance quand même l'échelle SRS (le touch est stampé même sans
+  changement d'état). La résolution d'une cible devient UNE transaction —
+  tentative + maîtrise dérivée + progression de séance — sous une clé
+  idempotente (séance, cible, tour), pour qu'un rejeu soit un vrai no-op.
 - **Un registre d'activités** (du code) ; ajouter une activité = un dossier
   avec ses nœuds, ses prompts, ses tests et ses cas d'eval, sans toucher au
-  reste. Chaque activité a son harnais d'eval — condition pour itérer vite.
+  reste. Le registre se conçoit contre DEUX activités dès le départ
+  (socratique refactoré + quiz fermé) : une abstraction extraite d'un seul
+  cas épouse ce cas.
 
 ### Schéma (delta)
 
-- `CurriculumNode` (cf. §3) + seed versionné par niveau × matière.
-- `Concept.knowledgeKind` ; `Concept.curriculumNodeId?` (rattachement).
-- La maîtrise reste par (élève, concept) ; les exercices ancrés référentiel
-  écrivent sur un concept « du référentiel » matérialisé par élève au premier
-  travail (même applier, même historique).
-- `session_trace` : entrées typées par activité, avec le détail (énoncé posé,
-  réponse donnée) — la vue parent et le debug en dépendent.
+Le pivot : une **cible pédagogique canonique** (`LearningTarget`) porte la
+maîtrise — pas le concept de leçon, qui aujourd'hui exige une leçon et
+dupliquerait la maîtrise entre deux leçons couvrant le même attendu :
+
+```
+CurriculumNode ──┐
+                 ├─→ LearningTarget ←── Mastery (par élève)
+LessonConcept ───┘         ↑
+                    ActivityAttempt (append-only)
+```
+
+- Un concept de leçon rattaché au référentiel partage la cible du nœud : deux
+  leçons sur le même attendu nourrissent UNE maîtrise. Un concept non
+  rattaché porte sa propre cible (rattachable plus tard — la fusion de
+  maîtrises passe par l'applier, avec historique). Les exercices ancrés
+  référentiel visent la cible du nœud directement, sans leçon.
+- **Exposition ≠ maîtrise** : la cible porte, par élève, un état d'exposition
+  (jamais abordé / introduit — par une leçon rattachée, une demande explicite
+  ou une échéance / en entraînement), distinct du niveau de maîtrise. C'est ce
+  qui rend le sélecteur et la carte parent honnêtes (§4).
+- `ActivityAttempt` (append-only) et `StudySession` (§4) ; `session_trace`
+  est absorbée/étendue par ces deux entités.
+- `subject` et `gradeLevel` deviennent des **codes stables** (plus de chaînes
+  libres) — le référentiel l'exige.
+- `Concept.knowledgeKind` renseigné à l'ingestion.
 
 ### Modèles par rôle et appels structurés
 
@@ -267,8 +341,10 @@ contrat d'activité y touche déjà) ou juste avant une bascule de fournisseur.
 ### TTS (à intégrer dès la conception)
 
 Périmètre : dictées (indispensable) et consignes lues pour le CE2 (confort).
-Intégration proposée : un endpoint backend `GET /api/tts?text=…` qui appelle un
-service TTS (choix du fournisseur à faire : OpenAI TTS, Google, ElevenLabs…),
+Intégration proposée : un endpoint backend authentifié — POST, ou mieux, un
+audio dérivé côté serveur d'un item existant (jamais le texte de la dictée en
+URL : il finirait dans les logs) — appelant un service TTS (fournisseur à
+choisir : OpenAI TTS, Google, ElevenLabs…),
 avec cache disque par hash du texte (une dictée re-jouée ne re-paye pas), et un
 composant audio simple côté front. Le français de qualité et le coût par
 caractère sont les critères de choix. Rien d'autre dans l'app n'a besoin de
@@ -279,23 +355,29 @@ changer — c'est un service annexe, pas un pilier.
 0. *(à tout moment)* **Bascule de modèles** — pure config par rôle (§7),
    accompagnée de l'extraction du helper d'appel structuré et, pour le
    socratique, validée par le harnais d'eval.
-1. **Le contrat d'activité (pure architecture).** Le socratique devient le
-   premier module du registre ; boucle de séance générique ; `knowledgeKind` ;
-   traces typées. Aucune fonctionnalité nouvelle — le pivot modulaire.
-2. **Le référentiel.** Schéma `CurriculumNode` + curation maths CE2 & 6ème +
-   rattachement des concepts à l'ingestion + première carte d'avancement
-   (lecture seule) dans la vue parent.
-3. **Le quiz.** Deuxième activité, la plus simple, toutes matières ; tire ses
-   questions des concepts de leçons ET des nœuds du référentiel. Valide le
-   contrat à faible risque.
+1. **Le domaine + le contrat d'activité + le quiz (une seule fondation).**
+   D'abord l'évolution du modèle : cible canonique, tentatives append-only,
+   exposition, séance persistée, codes stables, résolution idempotente et
+   transactionnelle. Puis le registre d'activités, conçu contre DEUX modules
+   dès le départ — le socratique refactoré ET le quiz fermé (concevoir le
+   registre sur le seul socratique le ferait épouser le socratique). Le pivot
+   de tout le plan.
+2. **Le référentiel.** Structure trois couches (§3) + curation verticale :
+   maths CE2 d'abord (quelques compétences suffisent à ancrer l'étape 4a),
+   6ème dans la foulée ; rattachement des concepts à l'ingestion avec
+   provenance ; carte d'avancement minimale et honnête (« pas encore abordé »
+   distinct de « en difficulté »).
+3. *(absorbée par l'étape 1 — le quiz naît avec le registre.)*
 4. **Les exercices maths.** Templates déterministes pour les automatismes,
    génération vérifiée pour les problèmes, formats fermés pour la géométrie ;
    UI d'entrée adaptée (clavier numérique). L'étape qui ouvre vraiment les
    maths CE2/6ème.
-5. **Le menu du jour.** Sélecteur inter-leçons/inter-matières (SRS global) +
-   proposition à l'ouverture, un tap pour accepter. Conçu d'emblée à deux
-   régimes : routine + objectifs datés (les échéances, §4) — la déclaration
-   d'échéance arrive ici, le plan à rebours aussi.
+5. **Le menu du jour.** Sélecteur sur les seules cibles **éligibles** (§4),
+   playlist persistée (`StudySession`), proposition à l'ouverture, un tap.
+   Conçu d'emblée à deux régimes : routine + objectifs datés (les échéances) —
+   la déclaration d'échéance arrive ici, le plan à rebours aussi. La vue
+   parent se branche sur les tentatives et séances réelles (activité,
+   progression, blocages, assiduité).
 6. **Le français au-delà de la grammaire.** Dictée (TTS) puis expression
    écrite courte (retour critérié). Curation référentiel français.
 7. **Le collège en propre.** Séances multi-matières plus longues, import de la
@@ -317,16 +399,20 @@ production dès qu'elle est verte. Trois conséquences sur le chemin :
   problèmes à génération vérifiée : le morceau le plus incertain du plan
   (boucle qualité/eval longue), repoussé APRÈS le jalon — l'usage réel dira
   quels types de problèmes comptent.
-- **L'étape 2 se resserre pré-jalon** : maths uniquement, granularité
-  grossière (domaines → attendus, ~40-60 nœuds par niveau), carte
-  d'avancement minimale. La curation est le pôle de risque temps (du contenu à
-  relire, pas du code) : timeboxée, approfondie post-jalon sur données réelles.
+- **L'étape 2 se resserre pré-jalon** : vertical maths CE2 d'abord — quelques
+  compétences évaluables bien choisies plutôt qu'une couverture large ; 6ème
+  si la cadence tient. La structure trois couches est fixée, seuls les volumes
+  sont timeboxés. La curation reste le pôle de risque temps (du contenu à
+  relire, pas du code) : approfondie post-jalon sur données réelles.
 - **L'étape 5 fait partie du jalon.** Le menu du jour est ce qui crée l'usage
   autonome quotidien — précisément ce qu'on veut observer. Version jalon
-  simple : régime routine + déclaration d'échéance avec plan à rebours
-  proportionnel, sans optimisation fine.
+  simple : régime routine sur cibles éligibles + playlist persistée. La
+  conception à deux régimes est actée ; l'implémentation de la déclaration
+  d'échéance (poésie CE2 = cas minimal) est le premier candidat à décaler
+  juste après le jalon si le calendrier glisse.
 
-**Jalon = 0 + 1 + 3 + 2-minimal + 4a + 5-simple.** Post-jalon, piloté par les
+**Jalon = 0 + 1 (domaine + registre + quiz) + 2-vertical + 4a + 5-simple.**
+Post-jalon, piloté par les
 apprentissages : 4b, 6 (dictée, écriture), 7 (collège), approfondissement du
 référentiel, gamification. L'app actuelle déjà déployée (socratique sur les
 matières déclaratives + ingestion photo) est utilisable par les enfants dès
@@ -359,6 +445,12 @@ maintenant — les premières observations n'attendent pas le jalon.
 9. **Mobile natif iOS en phase 2** (repo séparé) : le backend reste la seule
    source de vérité et doit être consommable par un client non-TypeScript —
    auth duale, contrats générés depuis les schémas zod, SSE standard (§10).
+10. **Revue croisée intégrée** : cible pédagogique canonique
+    (`LearningTarget`) porteuse de la maîtrise ; preuves d'apprentissage
+    append-only (`ActivityAttempt`) repliées en maîtrise par une politique
+    déterministe ; séance persistée (`StudySession`) distincte du thread de
+    chat ; éligibilité par exposition (inconnu ≠ lacune) ; résolution
+    idempotente et transactionnelle ; registre conçu contre deux activités.
 
 ## 10. Multi-clients : web aujourd'hui, mobile natif demain
 
@@ -405,8 +497,9 @@ via navigateur) sert d'app mobile de transition.
 
 Tranchés sur pièce au moment concerné, pas bloquants pour la vision :
 
-1. **Granularité du référentiel** — jusqu'où descendre (domaine → attendu →
-   sous-compétence) : à calibrer pendant la curation maths, sur pièce.
+1. **Volumes du référentiel** — la *structure* (reporting / évaluable / items)
+   est tranchée (§3) ; le nombre de nœuds et la finesse des feuilles se
+   calibrent pendant la curation maths, sur pièce.
 2. **Gamification** — série de jours, étoiles par concept : forme exacte et
    visibilité parent à décider quand le menu du jour existe (elle s'y adosse).
 3. **Fournisseur TTS** — qualité du français vs coût ; à évaluer au moment de
